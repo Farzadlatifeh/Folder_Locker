@@ -284,6 +284,8 @@
         document.getElementById('registerSection').classList.remove('active');
         document.getElementById('forgotPasswordSection').classList.remove('active');
         document.getElementById('mainSection').classList.remove('active');
+        document.getElementById('fpUsernameDisplay').style.display='block';
+        document.getElementById('fpQuestionsContainer').style.display='block';
     }
     
     function showForgotPassword() {
@@ -294,6 +296,8 @@
         document.getElementById('fpUsernameStep').style.display='block';
         document.getElementById('fpVerifyStep').style.display='none';
         document.getElementById('fpResetStep').style.display='none';
+        document.getElementById('fpUsernameDisplay').style.display='block';
+        document.getElementById('fpQuestionsContainer').style.display='block';
         // Clear fields
         document.getElementById('fpUsername').value = '';
         document.getElementById('fpAnswer1').value = '';
@@ -809,6 +813,8 @@
                 document.getElementById('fpUsernameStep').style.display = 'none';
                 document.getElementById('fpVerifyStep').style.display = 'block';
                 document.getElementById('fpUsernameDisplay').textContent = 'Username: ' + username;
+                document.getElementById('fpUsernameDisplay').style.display = 'block';
+                document.getElementById('fpQuestionsContainer').style.display = 'block';
                 
                 // Hide all question rows first
                 ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
@@ -923,6 +929,8 @@
                 fpResetToken = data.reset_token;
                 document.getElementById('fpVerifyStep').style.display = 'none';
                 document.getElementById('fpResetStep').style.display = 'block';
+                document.getElementById('fpUsernameDisplay').style.display = 'none';
+                document.getElementById('fpQuestionsContainer').style.display = 'none';
                 showToast(data.message, 'success');
             } else {
                 showToast(data.error || 'Verification failed', 'error');
