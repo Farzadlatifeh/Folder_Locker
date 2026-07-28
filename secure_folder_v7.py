@@ -779,6 +779,31 @@ def set_vault():
     save_vault_folder(path)
     return jsonify({"message": f"Vault folder set to {path}"})
 
+@app.route("/admin/browse_folder", methods=["POST"])
+@admin_required
+def browse_folder():
+    """Open a folder browser dialog and return the selected folder path."""
+    try:
+        import tkinter as tk
+        from tkinter import filedialog
+        
+        # Create a hidden Tkinter window for the file dialog
+        root = tk.Tk()
+        root.withdraw()  # Hide the main window
+        root.attributes('-topmost', True)  # Bring dialog to front
+        
+        # Open directory selection dialog
+        selected_folder = filedialog.askdirectory(title="Select Vault Folder")
+        
+        root.destroy()  # Clean up the Tkinter window
+        
+        if selected_folder:
+            return jsonify({"folder": selected_folder})
+        else:
+            return jsonify({"error": "No folder selected"}), 400
+    except Exception as e:
+        return jsonify({"error": f"Failed to open folder browser: {str(e)}"}), 500
+
 @app.route("/admin/reset_app", methods=["POST"])
 @admin_required
 def reset_app():
