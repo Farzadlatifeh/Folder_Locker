@@ -117,11 +117,8 @@
             </div>
 
             <div class="row">
-                <input type="text" id="fileInput" list="fileList" placeholder="Type file name (sub‑folder supported)" oninput="filterFileListFromInput()">
+                <input type="text" id="fileInput" list="fileList" placeholder="🔍 Type or search file name (sub‑folder supported)" oninput="filterFileListFromInput()">
                 <datalist id="fileList"></datalist>
-            </div>
-            <div class="flex" style="margin-bottom:10px;">
-                <input type="text" id="fileSearchInput" placeholder="🔍 Search files..." onkeyup="filterFileList()" style="flex:1;">
             </div>
 
             <div class="row">
@@ -286,6 +283,7 @@
                 // If a vault folder already exists, show it
                 if (currentUser.folder) {
                     document.getElementById('vaultFolderPath').value = currentUser.folder;
+                    loadFileList();  // Load file list when vault folder exists
                 }
                 loadUserList();
             } else {
@@ -355,12 +353,6 @@
             opt.value = f;
             datalist.appendChild(opt);
         });
-    }
-
-    function filterFileList() {
-        const searchTerm = document.getElementById('fileSearchInput').value.toLowerCase();
-        const filtered = allFilesData.filter(f => f.toLowerCase().includes(searchTerm));
-        renderFileList(filtered);
     }
 
     function filterFileListFromInput() {
