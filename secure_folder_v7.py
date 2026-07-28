@@ -516,6 +516,46 @@ def get_security_questions():
     """Return available security questions for registration."""
     return jsonify({"questions": SECURITY_QUESTIONS})
 
+@app.route("/forgot_password/questions", methods=["POST"])
+def forgot_password_get_questions():
+    """Get user's security questions for password recovery (without revealing answers)."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+    except Exception as e:
+        logger.error(f"Invalid JSON in forgot password get questions: {e}")
+        return jsonify({"error": "Invalid request format"}), 400
+
+    username = data.get("username", "").strip().lower()
+
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+
+    with _cache_lock:
+        if _users_cache is None:
+            if _admin_key and USERS_FILE_ENC.exists():
+                _users_cache = load_users_from_encrypted(_admin_key)
+            if _users_cache is None:
+                return jsonify({"error": "No user database"}), 400
+
+        if username not in _users_cache:
+            return jsonify({"error": "User not found", "success": False}), 404
+
+        user_data = _users_cache[username]
+        stored_questions = user_data.get("security_questions", [])
+
+        if not stored_questions:
+            return jsonify({"error": "No security questions set for this user", "success": False}), 400
+
+        # Return only the question texts (not hashes or salts)
+        questions_list = [sq["question"] for sq in stored_questions]
+        
+        return jsonify({
+            "success": True,
+            "questions": questions_list
+        })
+
 @app.route("/forgot_password/verify", methods=["POST"])
 def forgot_password_verify():
     """Verify security question answers for password reset."""

@@ -330,9 +330,44 @@
             return;
         }
 
+        // Collect security questions
+        const securityQuestions = [];
+        const q1 = document.getElementById('sqQuestion1').value;
+        const a1 = document.getElementById('sqAnswer1Input').value.trim();
+        const q2 = document.getElementById('sqQuestion2').value;
+        const a2 = document.getElementById('sqAnswer2Input').value.trim();
+        const q3 = document.getElementById('sqQuestion3').value;
+        const a3 = document.getElementById('sqAnswer3Input').value.trim();
+
+        if (q1 && a1) {
+            securityQuestions.push({ question: q1, answer: a1 });
+        }
+        if (q2 && a2) {
+            securityQuestions.push({ question: q2, answer: a2 });
+        }
+        if (q3 && a3 && document.getElementById('sqRow3').style.display !== 'none') {
+            securityQuestions.push({ question: q3, answer: a3 });
+        }
+
+        // Validate security questions
+        if (securityQuestions.length < 2) {
+            showToast('Please select and answer at least 2 security questions', 'error');
+            return;
+        }
+        if (securityQuestions.length > 3) {
+            showToast('Maximum 3 security questions allowed', 'error');
+            return;
+        }
+        for (const sq of securityQuestions) {
+            if (sq.answer.length < 2) {
+                showToast('Security question answers must be at least 2 characters', 'error');
+                return;
+            }
+        }
+
         const res = await fetch(API+'register', {
             method:'POST', headers:{'Content-Type':'application/json'},
-            body: JSON.stringify({username, password})
+            body: JSON.stringify({username, password, security_questions: securityQuestions})
         });
         const data = await res.json();
         if (res.ok) {
@@ -681,11 +716,97 @@
             showToast('Error during reset: ' + error.message, 'error');
         }
     }
-</script>
-</body>
-</html>
+
+    // Load security questions for registration
+    async function loadSecurityQuestions() {
+        try {
+            const res = await fetch(API + 'security_questions');
+            const data = await res.json();
+            if (res.ok && data.questions) {
+                const q1Select = document.getElementById('sqQuestion1');
+                const q2Select = document.getElementById('sqQuestion2');
+                const q3Select = document.getElementById('sqQuestion3');
+                
+                // Clear existing options except first
+                q1Select.innerHTML = '<option value="">-- Select Question 1 --</option>';
+                q2Select.innerHTML = '<option value="">-- Select Question 2 --</option>';
+                q3Select.innerHTML = '<option value="">-- Select Question 3 (Optional) --</option>';
+                
+                // Populate dropdowns
+                data.questions.forEach(q => {
+                    const opt1 = document.createElement('option');
+                    opt1.value = q;
+                    opt1.textContent = q;
+                    q1Select.appendChild(opt1.cloneNode(true));
+                    q2Select.appendChild(opt1.cloneNode(true));
+                    q3Select.appendChild(opt1.cloneNode(true));
+                });
+            }
+        } catch (error) {
+            console.error('Failed to load security questions:', error);
+        }
+    }
+
+    // Toggle third security question visibility
+    function toggleThirdQuestion() {
+        const row3 = document.getElementById('sqRow3');
+        const answer3 = document.getElementById('sqAnswer3');
+        const btn = document.querySelector('button[onclick="toggleThirdQuestion()"]');
+        
+        if (row3.style.display === 'none') {
+            row3.style.display = 'flex';
+            answer3.style.display = 'flex';
+            btn.textContent = '- Remove Third Question';
+        } else {
+            row3.style.display = 'none';
+            answer3.style.display = 'none';
+            document.getElementById('sqQuestion3').value = '';
+            document.getElementById('sqAnswer3Input').value = '';
+            btn.textContent = '+ Add Optional Third Question';
+        }
+    }
+
     // Forgot Password Functions
     let fpResetToken = null;
+
+    // Load user's security questions for password recovery
+    async function loadUserSecurityQuestions(username) {
+        try {
+            const res = await fetch(API + 'forgot_password/questions', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username })
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) {
+                const questions = data.questions;
+                
+                // Hide all question rows first
+                ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
+                    document.getElementById(id).style.display = 'none';
+                });
+                
+                // Show only the questions this user has set
+                questions.forEach((q, index) => {
+                    const qRow = document.getElementById(`fpQ${index + 1}Row`);
+                    const aRow = document.getElementById(`fpA${index + 1}Row`);
+                    const qText = document.getElementById(`fpQuestion${index + 1}`);
+                    
+                    qText.textContent = q;
+                    qRow.style.display = 'flex';
+                    aRow.style.display = 'flex';
+                });
+                
+                return true;
+            } else {
+                return false;
+            }
+        } catch (error) {
+            console.error('Failed to load user security questions:', error);
+            return false;
+        }
+    }
     
     async function verifySecurityAnswers() {
         const username = document.getElementById('fpUsername').value.trim().toLowerCase();
@@ -782,3 +903,29 @@
             showToast('Error: ' + error.message, 'error');
         }
     }
+
+    // Add event listener to fpUsername field to load security questions when username is entered
+    document.addEventListener('DOMContentLoaded', function() {
+        const fpUsernameInput = document.getElementById('fpUsername');
+        if (fpUsernameInput) {
+            let debounceTimer;
+            fpUsernameInput.addEventListener('input', function() {
+                clearTimeout(debounceTimer);
+                const username = this.value.trim().toLowerCase();
+                if (username.length >= 2) {
+                    debounceTimer = setTimeout(async () => {
+                        const loaded = await loadUserSecurityQuestions(username);
+                        if (!loaded) {
+                            // Hide all question rows if user not found or error
+                            ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
+                                document.getElementById(id).style.display = 'none';
+                            });
+                        }
+                    }, 500);
+                }
+            });
+        }
+    });
+</script>
+</body>
+</html>
