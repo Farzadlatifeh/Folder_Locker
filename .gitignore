@@ -1,1 +1,18 @@
-(index.html is a source file, so no changes needed to .gitignore)
+```
+# Compiled Python files
+*.pyc
+__pycache__/
+
+# Virtual environments
+.venv/
+venv/
+env/
+
+# Python cache
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+*.egg-info/
+```
