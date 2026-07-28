@@ -25,12 +25,27 @@ HOME_DIR = Path.home()
 ADMIN_KEY_FILE = HOME_DIR / ".secure_folder_admin_key.bin"
 VAULT_FOLDER_FILE = HOME_DIR / ".secure_folder_vault.txt"
 USERS_FILE_ENC = HOME_DIR / ".secure_folder_users.json.enc"
+ADMIN_RECOVERY_KEY_FILE = HOME_DIR / ".secure_folder_admin_recovery.bin"
 
 SESSION_TIMEOUT = timedelta(hours=2)
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
 PBKDF2_ITERATIONS = 100_000
 BCRYPT_ROUNDS = 12
+
+# Security Questions Pool
+SECURITY_QUESTIONS = [
+    "What was the name of your first pet?",
+    "What city were you born in?",
+    "What is your mother's maiden name?",
+    "What was the name of your elementary school?",
+    "What is your favorite book?",
+    "What was your childhood nickname?",
+    "What is the name of your favorite teacher?",
+    "What street did you grow up on?",
+    "What is your favorite movie?",
+    "What was the make of your first car?"
+]
 
 # ---------- Logging setup ----------
 logging.basicConfig(
@@ -76,6 +91,24 @@ def save_admin_key(key: bytes):
     ADMIN_KEY_FILE.write_bytes(key)
     global _admin_key
     _admin_key = key
+
+def save_admin_recovery_key(recovery_key: bytes):
+    """Save admin recovery key for emergency file re-encryption."""
+    ADMIN_RECOVERY_KEY_FILE.write_bytes(encrypt_data(recovery_key, _admin_key))
+
+def load_admin_recovery_key() -> Optional[bytes]:
+    """Load admin recovery key encrypted with admin key."""
+    if not ADMIN_RECOVERY_KEY_FILE.exists() or not _admin_key:
+        return None
+    try:
+        encrypted = ADMIN_RECOVERY_KEY_FILE.read_bytes()
+        return decrypt_data(encrypted, _admin_key)
+    except Exception:
+        return None
+
+def generate_recovery_key() -> bytes:
+    """Generate a random recovery key for admin use."""
+    return secrets.token_bytes(32)
 
 # ---------- Crypto helpers ----------
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -255,6 +288,7 @@ def register():
 
     username = data.get("username", "").strip().lower()
     password = data.get("password", "")
+    security_questions = data.get("security_questions", [])  # List of {question, answer}
 
     # Validate input
     if not username:
@@ -267,6 +301,18 @@ def register():
         return jsonify({"error": "Password must be at least 8 characters"}), 400
     if len(password) > 128:
         return jsonify({"error": "Password is too long (max 128 characters)"}), 400
+    
+    # Validate security questions (require at least 2)
+    if not security_questions or len(security_questions) < 2:
+        return jsonify({"error": "At least 2 security questions are required"}), 400
+    if len(security_questions) > 3:
+        return jsonify({"error": "Maximum 3 security questions allowed"}), 400
+    
+    for sq in security_questions:
+        if not sq.get("question") or not sq.get("answer"):
+            return jsonify({"error": "Each security question must have a question and answer"}), 400
+        if len(sq["answer"]) < 2:
+            return jsonify({"error": "Security question answers must be at least 2 characters"}), 400
 
     with _cache_lock:
         # Initialize users cache if needed
@@ -304,12 +350,26 @@ def register():
             # It will be wrapped when the next user registers
             pass
 
+        # Hash security question answers with individual salts
+        security_data = []
+        for sq in security_questions:
+            sq_salt = secrets.token_bytes(16)
+            # Normalize answer: lowercase and strip whitespace
+            normalized_answer = sq["answer"].strip().lower()
+            sq_hash = bcrypt.hashpw(normalized_answer.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+            security_data.append({
+                "question": sq["question"],
+                "hash": sq_hash,
+                "salt": sq_salt.hex()
+            })
+
         _users_cache[username] = {
             "password_hash": hashed,
             "kdf_salt": kdf_salt.hex(),
             "role": role,
             "created_at": datetime.now().isoformat(),
-            "user_key_wrapped": user_key_wrapped  # Encrypted user key for admin access granting
+            "user_key_wrapped": user_key_wrapped,  # Encrypted user key for admin access granting
+            "security_questions": security_data  # Hashed security questions
         }
 
         # If first admin, derive and save admin key
@@ -320,6 +380,9 @@ def register():
                 _admin_key = derived
                 # Now wrap the first admin's key with the newly created admin key
                 _users_cache[username]["user_key_wrapped"] = wrap_fek(user_enc_key, derived)
+                # Generate and save admin recovery key
+                recovery_key = generate_recovery_key()
+                save_admin_recovery_key(recovery_key)
                 # Re-save users with the wrapped key
                 save_users_encrypted(_users_cache, _admin_key)
             except PermissionError as e:
@@ -339,7 +402,8 @@ def register():
     logger.info(f"New user registered: {username} ({role})")
     return jsonify({
         "message": f"User '{username}' registered successfully as {role}",
-        "role": role
+        "role": role,
+        "security_questions_count": len(security_data)
     }), 201
 
 @app.route("/login", methods=["POST"])
@@ -445,6 +509,171 @@ def whoami():
         "username": username,
         "role": user_data.get("role", "user"),
         "folder": str(_vault_folder) if _vault_folder else None
+    })
+
+@app.route("/security_questions", methods=["GET"])
+def get_security_questions():
+    """Return available security questions for registration."""
+    return jsonify({"questions": SECURITY_QUESTIONS})
+
+@app.route("/forgot_password/verify", methods=["POST"])
+def forgot_password_verify():
+    """Verify security question answers for password reset."""
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+    except Exception as e:
+        logger.error(f"Invalid JSON in forgot password verify: {e}")
+        return jsonify({"error": "Invalid request format"}), 400
+
+    username = data.get("username", "").strip().lower()
+    answers = data.get("answers", [])  # List of {question, answer}
+
+    if not username or not answers:
+        return jsonify({"error": "Username and answers are required"}), 400
+
+    with _cache_lock:
+        if _users_cache is None:
+            if _admin_key and USERS_FILE_ENC.exists():
+                _users_cache = load_users_from_encrypted(_admin_key)
+            if _users_cache is None:
+                return jsonify({"error": "No user database"}), 400
+
+        if username not in _users_cache:
+            return jsonify({"error": "User not found"}), 404
+
+        user_data = _users_cache[username]
+        stored_questions = user_data.get("security_questions", [])
+
+        if not stored_questions:
+            return jsonify({"error": "No security questions set for this user"}), 400
+
+        # Check if at least 2 answers match (require majority)
+        correct_count = 0
+        for provided in answers:
+            question_text = provided.get("question", "").strip()
+            answer_text = provided.get("answer", "").strip().lower()
+            
+            # Find matching question in stored questions
+            for stored in stored_questions:
+                if stored["question"] == question_text:
+                    # Verify the answer hash
+                    if bcrypt.checkpw(answer_text.encode(), stored["hash"].encode()):
+                        correct_count += 1
+                    break
+
+        # Require at least 2 correct answers (or all if only 2 questions)
+        required_correct = min(2, len(stored_questions))
+        if correct_count >= required_correct:
+            # Generate a temporary reset token
+            reset_token = secrets.token_hex(32)
+            # Store token with expiration (15 minutes)
+            if not hasattr(app, 'reset_tokens'):
+                app.reset_tokens = {}
+            app.reset_tokens[reset_token] = {
+                "username": username,
+                "expires": datetime.now() + timedelta(minutes=15)
+            }
+            logger.info(f"Password reset verified for user: {username}")
+            return jsonify({
+                "success": True,
+                "reset_token": reset_token,
+                "message": "Security questions verified. You may now reset your password."
+            })
+        else:
+            logger.warning(f"Failed security question verification for: {username}")
+            return jsonify({"error": "Incorrect answers. Please try again."}), 401
+
+@app.route("/forgot_password/reset", methods=["POST"])
+def forgot_password_reset():
+    """Reset password using valid reset token."""
+    global _users_cache, _admin_key
+    
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+    except Exception as e:
+        logger.error(f"Invalid JSON in forgot password reset: {e}")
+        return jsonify({"error": "Invalid request format"}), 400
+
+    reset_token = data.get("reset_token", "")
+    new_password = data.get("new_password", "")
+
+    if not reset_token or not new_password:
+        return jsonify({"error": "Reset token and new password are required"}), 400
+
+    if len(new_password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    if len(new_password) > 128:
+        return jsonify({"error": "Password is too long (max 128 characters)"}), 400
+
+    # Validate reset token
+    if not hasattr(app, 'reset_tokens') or reset_token not in app.reset_tokens:
+        return jsonify({"error": "Invalid or expired reset token"}), 400
+
+    token_data = app.reset_tokens[reset_token]
+    if datetime.now() > token_data["expires"]:
+        del app.reset_tokens[reset_token]
+        return jsonify({"error": "Reset token has expired"}), 400
+
+    username = token_data["username"]
+
+    with _cache_lock:
+        if _users_cache is None:
+            if _admin_key and USERS_FILE_ENC.exists():
+                _users_cache = load_users_from_encrypted(_admin_key)
+            if _users_cache is None:
+                return jsonify({"error": "No user database"}), 400
+
+        if username not in _users_cache:
+            return jsonify({"error": "User not found"}), 404
+
+        user_data = _users_cache[username]
+        
+        # Hash new password
+        new_hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+        
+        # Derive new encryption key from new password
+        new_kdf_salt = secrets.token_bytes(16)
+        new_user_enc_key = derive_key(new_password, new_kdf_salt)
+        
+        # Re-wrap user's encryption key with admin key
+        if not _admin_key:
+            return jsonify({"error": "Admin key not available"}), 500
+        
+        new_wrapped_key = wrap_fek(new_user_enc_key, _admin_key)
+        
+        # Update user data
+        _users_cache[username]["password_hash"] = new_hashed
+        _users_cache[username]["kdf_salt"] = new_kdf_salt.hex()
+        _users_cache[username]["user_key_wrapped"] = new_wrapped_key
+        
+        # Save updated users database
+        try:
+            save_users_encrypted(_users_cache, _admin_key)
+        except Exception as e:
+            logger.error(f"Failed to save user database after password reset: {e}")
+            return jsonify({"error": "Failed to save new password"}), 500
+
+        # Invalidate the reset token
+        del app.reset_tokens[reset_token]
+
+        # If this is the admin, we need to re-encrypt all files with the new recovery key
+        if user_data.get("role") == "admin":
+            # Generate new recovery key and save it
+            new_recovery_key = generate_recovery_key()
+            save_admin_recovery_key(new_recovery_key)
+            logger.info(f"Admin recovery key regenerated after password reset")
+            
+            # Note: Files encrypted with old FEKs wrapped by admin key will need re-wrapping
+            # This is handled by the admin on next login or via a dedicated endpoint
+
+    logger.info(f"Password reset successful for user: {username}")
+    return jsonify({
+        "success": True,
+        "message": "Password has been reset successfully. You can now log in with your new password."
     })
 
 # ------------------------------------------------------------
@@ -858,6 +1087,14 @@ def reset_app():
             logger.info("Removed admin key file")
     except Exception as e:
         logger.error(f"Error removing admin key file: {e}")
+    
+    try:
+        if ADMIN_RECOVERY_KEY_FILE.exists():
+            ADMIN_RECOVERY_KEY_FILE.unlink()
+            files_removed.append(str(ADMIN_RECOVERY_KEY_FILE))
+            logger.info("Removed admin recovery key file")
+    except Exception as e:
+        logger.error(f"Error removing admin recovery key file: {e}")
     
     try:
         if VAULT_FOLDER_FILE.exists():
