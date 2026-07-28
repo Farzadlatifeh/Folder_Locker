@@ -351,13 +351,11 @@
         const displayDiv = document.getElementById('userListDisplay');
         let html = '';
         for (const [username, data] of Object.entries(users)) {
-            const passwordShown = data.showPassword ? (data.password || 'N/A') : '••••••••';
-            const visibilityIcon = data.showPassword ? '🙈' : '👁️';
+            const hasKey = data.has_key_wrapped ? '✅' : '❌';
             html += `<div class="user-entry" style="align-items:center;">
-                <span>${username}</span>
+                <span>${username} (${data.role})</span>
                 <div class="flex" style="gap:5px;align-items:center;">
-                    <span style="color:#aaa;font-family:monospace;">${passwordShown}</span>
-                    <button onclick="togglePasswordVisibility('${username}')" style="width:auto;padding:4px 8px;font-size:12px;background:#555;">${visibilityIcon}</button>
+                    <span style="color:#aaa;font-family:monospace;">Key available: ${hasKey}</span>
                 </div>
             </div>`;
         }
@@ -380,19 +378,13 @@
         const filtered = {};
         for (const [username, data] of Object.entries(allUsersData)) {
             if (username.toLowerCase().includes(searchTerm)) {
-                // Preserve showPassword state from allUsersData
-                filtered[username] = {...data, showPassword: data.showPassword || false};
+                filtered[username] = data;
             }
         }
         renderUserList(filtered);
     }
 
-    function togglePasswordVisibility(username) {
-        if (allUsersData[username]) {
-            allUsersData[username].showPassword = !allUsersData[username].showPassword;
-            renderUserList(allUsersData);
-        }
-    }
+    // togglePasswordVisibility removed - passwords no longer displayed
 
     document.getElementById('folderPath').addEventListener('blur', () => {
         if (currentUser.role === 'admin') loadFileList();

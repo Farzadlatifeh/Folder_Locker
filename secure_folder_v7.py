@@ -290,14 +290,26 @@ def register():
         # Hash password with bcrypt
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
         kdf_salt = secrets.token_bytes(16)
+        
+        # Derive user's encryption key from password
+        user_enc_key = derive_key(password, kdf_salt)
 
-        # Store user data (password stored in plaintext for admin visibility and grant access feature)
+        # Store user data - encrypt user's encryption key with admin key for later access granting
+        user_key_wrapped = None
+        if _admin_key:
+            # Wrap the user's encryption key with admin key so admin can grant access later
+            user_key_wrapped = wrap_fek(user_enc_key, _admin_key)
+        else:
+            # First admin - will be set after this block, store key temporarily
+            # It will be wrapped when the next user registers
+            pass
+
         _users_cache[username] = {
             "password_hash": hashed,
             "kdf_salt": kdf_salt.hex(),
             "role": role,
             "created_at": datetime.now().isoformat(),
-            "password": password  # Plaintext password for admin panel display and file access granting
+            "user_key_wrapped": user_key_wrapped  # Encrypted user key for admin access granting
         }
 
         # If first admin, derive and save admin key
@@ -306,6 +318,10 @@ def register():
             try:
                 save_admin_key(derived)
                 _admin_key = derived
+                # Now wrap the first admin's key with the newly created admin key
+                _users_cache[username]["user_key_wrapped"] = wrap_fek(user_enc_key, derived)
+                # Re-save users with the wrapped key
+                save_users_encrypted(_users_cache, _admin_key)
             except PermissionError as e:
                 logger.error(f"Permission denied saving admin key: {e}")
                 del _users_cache[username]
@@ -600,14 +616,13 @@ def users_full():
     users = load_users()
     if users is None:
         return jsonify({"error": "User database not loaded"}), 500
-    # Return user data with passwords visible for admin (masked by default in UI)
+    # Return user data without passwords (keys are stored encrypted, not plaintext)
     result = {}
     for username, data in users.items():
         result[username] = {
-            "password": data.get("password", "N/A"),  # Password stored for admin visibility
             "role": data.get("role", "user"),
             "created_at": data.get("created_at", ""),
-            "showPassword": False  # Default to masked for UI toggle functionality
+            "has_key_wrapped": data.get("user_key_wrapped") is not None  # Indicate if key is available for access granting
         }
     return jsonify(result)
 
@@ -668,19 +683,22 @@ def grant_file_access():
     if target_user not in users:
         return jsonify({"error": "User not found"}), 404
     
-    # Get target user's password and derive their key
+    # Get target user's wrapped encryption key and unwrap it with admin key
     target_user_data = users[target_user]
-    target_password = target_user_data.get("password")
-    if not target_password:
-        return jsonify({"error": "Target user password not available. User may have been created before plaintext password storage was enabled."}), 500
+    user_key_wrapped = target_user_data.get("user_key_wrapped")
+    if not user_key_wrapped:
+        return jsonify({"error": "Target user key not available. User may have been created before encrypted key storage was enabled."}), 500
     
-    # Derive target user's encryption key from their stored password
+    # Unwrap the target user's encryption key using admin's key
     try:
-        target_kdf_salt = bytes.fromhex(target_user_data["kdf_salt"])
-        target_key = derive_key(target_password, target_kdf_salt)
+        token = session.get("token")
+        if not token or token not in _session_keys:
+            return jsonify({"error": "Unauthorized"}), 401
+        admin_key = _session_keys[token]["key"]
+        target_key = unwrap_fek(user_key_wrapped, admin_key)
     except Exception as e:
-        logger.error(f"Error deriving key for target user {target_user}: {e}")
-        return jsonify({"error": "Failed to derive target user key"}), 500
+        logger.error(f"Error unwrapping key for target user {target_user}: {e}")
+        return jsonify({"error": "Failed to retrieve target user key"}), 500
 
     # Wrap FEK for target user
     wrapped_fek = wrap_fek(fek, target_key)
