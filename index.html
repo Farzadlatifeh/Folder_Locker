@@ -772,15 +772,19 @@
     // Load user's security questions for password recovery
     async function loadUserSecurityQuestions(username) {
         try {
+            console.log('Fetching questions for username:', username);
             const res = await fetch(API + 'forgot_password/questions', {
                 method: 'POST',
                 headers: {'Content-Type': 'application/json'},
                 body: JSON.stringify({ username })
             });
+            console.log('Response status:', res.status);
             const data = await res.json();
+            console.log('Response data:', data);
             
             if (res.ok && data.success) {
                 const questions = data.questions;
+                console.log('Questions loaded:', questions);
                 
                 // Hide all question rows first
                 ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
@@ -793,6 +797,7 @@
                     const aRow = document.getElementById(`fpA${index + 1}Row`);
                     const qText = document.getElementById(`fpQuestion${index + 1}`);
                     
+                    console.log(`Setting question ${index + 1}:`, q);
                     qText.textContent = q;
                     qRow.style.display = 'flex';
                     aRow.style.display = 'flex';
@@ -800,6 +805,7 @@
                 
                 return true;
             } else {
+                console.log('No success or not OK:', data);
                 return false;
             }
         } catch (error) {
@@ -912,18 +918,30 @@
             fpUsernameInput.addEventListener('input', function() {
                 clearTimeout(debounceTimer);
                 const username = this.value.trim().toLowerCase();
+                console.log('Username input changed:', username);
                 if (username.length >= 2) {
                     debounceTimer = setTimeout(async () => {
+                        console.log('Calling loadUserSecurityQuestions for:', username);
                         const loaded = await loadUserSecurityQuestions(username);
+                        console.log('loadUserSecurityQuestions returned:', loaded);
                         if (!loaded) {
                             // Hide all question rows if user not found or error
+                            console.log('Hiding question rows because loaded=false');
                             ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
                                 document.getElementById(id).style.display = 'none';
                             });
                         }
                     }, 500);
+                } else {
+                    console.log('Username too short, hiding questions');
+                    // Hide all question rows if username is too short
+                    ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
+                        document.getElementById(id).style.display = 'none';
+                    });
                 }
             });
+        } else {
+            console.error('fpUsername input element not found!');
         }
     });
 </script>
