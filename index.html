@@ -85,6 +85,7 @@
             <div class="flex">
                 <input type="text" id="vaultFolderPath" placeholder="e.g. C:\SecureVault">
                 <button onclick="setVaultFolder()" style="width:auto;">Set</button>
+                <button onclick="browseVaultFolder()" style="width:auto; background:#555;">📂 Browse</button>
             </div>
         </div>
         
@@ -511,6 +512,24 @@
             showToast('Vault set successfully.', 'success');
         } else {
             showToast(data.error, 'error');
+        }
+    }
+
+    async function browseVaultFolder() {
+        try {
+            const res = await fetch(API + 'admin/browse_folder', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'}
+            });
+            const data = await res.json();
+            if (res.ok && data.folder) {
+                document.getElementById('vaultFolderPath').value = data.folder;
+                showToast('Folder selected.', 'success');
+            } else {
+                showToast(data.error || 'Failed to browse folder', 'error');
+            }
+        } catch (err) {
+            showToast('Error browsing folder: ' + err.message, 'error');
         }
     }
 
