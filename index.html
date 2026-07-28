@@ -65,14 +65,96 @@
             <input type="password" id="loginPass" placeholder="Password" required autocomplete="current-password">
             <button type="submit">Log In</button>
             <p class="small" style="text-align:center;">No account? <a href="#" onclick="showRegister()" style="color: #d7ec6e;">Register</a></p>
+            <p class="small" style="text-align:center; margin-top: 10px;"><a href="#" onclick="showForgotPassword()" style="color: #ff9f43;">Forgot Password?</a></p>
         </form>
 
         <form id="registerForm" style="display:none;" onsubmit="handleRegister(event)">
             <input type="text" id="regUser" placeholder="Choose username" autocomplete="username">
             <input type="password" id="regPass" placeholder="Choose password" autocomplete="new-password">
-            <button type="submit">Register</button>
+            
+            <div id="securityQuestionsSection" style="margin-top: 15px;">
+                <h4 style="color: var(--primary); margin-bottom: 10px;">🔒 Security Questions (Select 2-3)</h4>
+                <p class="small" style="margin-bottom: 10px; color: var(--text-muted);">These will be used to recover your account if you forget your password.</p>
+                
+                <div class="row" id="sqRow1">
+                    <select id="sqQuestion1">
+                        <option value="">-- Select Question 1 --</option>
+                    </select>
+                </div>
+                <div class="row" id="sqAnswer1">
+                    <input type="text" id="sqAnswer1Input" placeholder="Your Answer 1" autocomplete="off">
+                </div>
+                
+                <div class="row" id="sqRow2">
+                    <select id="sqQuestion2">
+                        <option value="">-- Select Question 2 --</option>
+                    </select>
+                </div>
+                <div class="row" id="sqAnswer2">
+                    <input type="text" id="sqAnswer2Input" placeholder="Your Answer 2" autocomplete="off">
+                </div>
+                
+                <div class="row" id="sqRow3" style="display:none;">
+                    <select id="sqQuestion3">
+                        <option value="">-- Select Question 3 (Optional) --</option>
+                    </select>
+                </div>
+                <div class="row" id="sqAnswer3" style="display:none;">
+                    <input type="text" id="sqAnswer3Input" placeholder="Your Answer 3 (Optional)" autocomplete="off">
+                </div>
+                
+                <button type="button" onclick="toggleThirdQuestion()" style="background: #555; margin-top: 10px;">+ Add Optional Third Question</button>
+            </div>
+            
+            <button type="submit" style="margin-top: 15px;">Register</button>
             <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
         </form>
+    </div>
+
+    <!-- Forgot Password Section -->
+    <div id="forgotPasswordSection" class="section">
+        <h2>🔑 Password Recovery</h2>
+        
+        <!-- Step 1: Verify Identity -->
+        <div id="fpVerifyStep">
+            <p class="small" style="margin-bottom: 15px; color: var(--text-muted);">Enter your username and answer your security questions to verify your identity.</p>
+            <input type="text" id="fpUsername" placeholder="Username" autocomplete="username">
+            
+            <div id="fpQuestionsContainer" style="margin-top: 15px;">
+                <div class="row" id="fpQ1Row" style="display:none;">
+                    <p id="fpQuestion1" style="color: var(--primary); font-weight: bold;"></p>
+                </div>
+                <div class="row" id="fpA1Row" style="display:none;">
+                    <input type="text" id="fpAnswer1" placeholder="Your Answer 1" autocomplete="off">
+                </div>
+                
+                <div class="row" id="fpQ2Row" style="display:none;">
+                    <p id="fpQuestion2" style="color: var(--primary); font-weight: bold;"></p>
+                </div>
+                <div class="row" id="fpA2Row" style="display:none;">
+                    <input type="text" id="fpAnswer2" placeholder="Your Answer 2" autocomplete="off">
+                </div>
+                
+                <div class="row" id="fpQ3Row" style="display:none;">
+                    <p id="fpQuestion3" style="color: var(--primary); font-weight: bold;"></p>
+                </div>
+                <div class="row" id="fpA3Row" style="display:none;">
+                    <input type="text" id="fpAnswer3" placeholder="Your Answer 3" autocomplete="off">
+                </div>
+            </div>
+            
+            <button onclick="verifySecurityAnswers()" style="margin-top: 15px;">Verify Answers</button>
+            <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
+        </div>
+        
+        <!-- Step 2: Reset Password -->
+        <div id="fpResetStep" style="display:none;">
+            <p class="small" style="margin-bottom: 15px; color: var(--success);">✓ Identity verified! You can now reset your password.</p>
+            <input type="password" id="fpNewPassword" placeholder="New Password" autocomplete="new-password">
+            <input type="password" id="fpConfirmPassword" placeholder="Confirm New Password" autocomplete="new-password">
+            <button onclick="resetPassword()" style="margin-top: 15px;">Reset Password</button>
+            <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
+        </div>
     </div>
 
     <!-- Main App -->
@@ -177,12 +259,34 @@
     let currentUser = {};
 
     function showRegister() {
-        document.getElementById('loginForm').style.display='none';
+        document.getElementById('authSection').classList.remove('active');
+        document.getElementById('forgotPasswordSection').classList.remove('active');
         document.getElementById('registerForm').style.display='block';
+        document.getElementById('registerForm').parentElement.classList.add('active');
+        loadSecurityQuestions();
     }
+    
     function showLogin() {
+        document.getElementById('authSection').classList.add('active');
+        document.getElementById('forgotPasswordSection').classList.remove('active');
+        document.getElementById('mainSection').classList.remove('active');
         document.getElementById('loginForm').style.display='block';
         document.getElementById('registerForm').style.display='none';
+    }
+    
+    function showForgotPassword() {
+        document.getElementById('authSection').classList.remove('active');
+        document.getElementById('registerForm').style.display='none';
+        document.getElementById('forgotPasswordSection').classList.add('active');
+        document.getElementById('fpVerifyStep').style.display='block';
+        document.getElementById('fpResetStep').style.display='none';
+        // Clear fields
+        document.getElementById('fpUsername').value = '';
+        document.getElementById('fpAnswer1').value = '';
+        document.getElementById('fpAnswer2').value = '';
+        document.getElementById('fpAnswer3').value = '';
+        document.querySelectorAll('[id^="fpQ"]').forEach(el => el.style.display = 'none');
+        document.querySelectorAll('[id^="fpA"]').forEach(el => el.style.display = 'none');
     }
 
     function handleLogin(e) {
@@ -580,3 +684,101 @@
 </script>
 </body>
 </html>
+    // Forgot Password Functions
+    let fpResetToken = null;
+    
+    async function verifySecurityAnswers() {
+        const username = document.getElementById('fpUsername').value.trim().toLowerCase();
+        if (!username) {
+            showToast('Please enter your username', 'error');
+            return;
+        }
+        
+        const answers = [];
+        if (document.getElementById('fpQ1Row').style.display !== 'none') {
+            const q = document.getElementById('fpQuestion1').textContent;
+            const a = document.getElementById('fpAnswer1').value;
+            if (q && a) answers.push({ question: q, answer: a });
+        }
+        if (document.getElementById('fpQ2Row').style.display !== 'none') {
+            const q = document.getElementById('fpQuestion2').textContent;
+            const a = document.getElementById('fpAnswer2').value;
+            if (q && a) answers.push({ question: q, answer: a });
+        }
+        if (document.getElementById('fpQ3Row').style.display !== 'none') {
+            const q = document.getElementById('fpQuestion3').textContent;
+            const a = document.getElementById('fpAnswer3').value;
+            if (q && a) answers.push({ question: q, answer: a });
+        }
+        
+        if (answers.length < 2) {
+            showToast('Please answer at least 2 security questions', 'error');
+            return;
+        }
+        
+        showToast('Verifying answers...', 'info');
+        
+        try {
+            const res = await fetch(API + 'forgot_password/verify', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username, answers })
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) {
+                fpResetToken = data.reset_token;
+                document.getElementById('fpVerifyStep').style.display = 'none';
+                document.getElementById('fpResetStep').style.display = 'block';
+                showToast(data.message, 'success');
+            } else {
+                showToast(data.error || 'Verification failed', 'error');
+            }
+        } catch (error) {
+            showToast('Error: ' + error.message, 'error');
+        }
+    }
+    
+    async function resetPassword() {
+        const newPassword = document.getElementById('fpNewPassword').value;
+        const confirmPassword = document.getElementById('fpConfirmPassword').value;
+        
+        if (!newPassword || newPassword.length < 8) {
+            showToast('Password must be at least 8 characters', 'error');
+            return;
+        }
+        if (newPassword !== confirmPassword) {
+            showToast('Passwords do not match', 'error');
+            return;
+        }
+        if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(newPassword)) {
+            showToast('Password must contain uppercase, lowercase, and number', 'error');
+            return;
+        }
+        
+        showToast('Resetting password...', 'info');
+        
+        try {
+            const res = await fetch(API + 'forgot_password/reset', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ reset_token: fpResetToken, new_password: newPassword })
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) {
+                showToast(data.message, 'success');
+                fpResetToken = null;
+                setTimeout(() => {
+                    showLogin();
+                }, 2000);
+            } else {
+                showToast(data.error || 'Password reset failed', 'error');
+                if (data.error && data.error.includes('expired')) {
+                    showLogin();
+                }
+            }
+        } catch (error) {
+            showToast('Error: ' + error.message, 'error');
+        }
+    }
