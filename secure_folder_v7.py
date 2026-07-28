@@ -8,7 +8,7 @@ from pathlib import Path
 from functools import wraps
 from threading import RLock, Thread
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any, Tuple
+from typing import Optional, Dict, Any, Tuple, List
 import time
 import logging
 import webview
@@ -148,6 +148,43 @@ def unwrap_fek(entry: dict, key: bytes) -> bytes:
     nonce = bytes.fromhex(entry["nonce"])
     wrapped = bytes.fromhex(entry["wrapped_fek"])
     return aesgcm.decrypt(nonce, wrapped, None)
+
+# ---------- Helper functions for password reset re-wrapping ----------
+def get_all_metadata_files(vault_path: Path) -> List[Path]:
+    """Return all .crypt_meta files under vault_path recursively."""
+    return list(vault_path.rglob(".crypt_meta"))
+
+def rewrap_feks_for_user(
+    vault_path: Path,
+    username: str,
+    old_user_key: bytes,
+    new_user_key: bytes
+) -> int:
+    """
+    Rewrap all FEKs for the given user in every .crypt_meta file under vault_path.
+    Returns the number of access entries updated.
+    """
+    count = 0
+    for meta_path in get_all_metadata_files(vault_path):
+        try:
+            meta = json.loads(meta_path.read_text())
+        except Exception:
+            continue
+        modified = False
+        for file_rel, file_info in meta.get("files", {}).items():
+            for entry in file_info.get("access_entries", []):
+                if entry["user"] == username:
+                    try:
+                        fek = unwrap_fek(entry["wrapped_fek"], old_user_key)
+                    except Exception:
+                        continue   # skip if the key doesn't match
+                    new_wrapped = wrap_fek(fek, new_user_key)
+                    entry["wrapped_fek"] = new_wrapped
+                    modified = True
+                    count += 1
+        if modified:
+            meta_path.write_text(json.dumps(meta, indent=2))
+    return count
 
 # ---------- User DB encryption / decryption ----------
 def save_users_encrypted(users_dict: dict, key: bytes):
@@ -639,9 +676,9 @@ def forgot_password_verify():
 
 @app.route("/forgot_password/reset", methods=["POST"])
 def forgot_password_reset():
-    """Reset password using valid reset token and re-wrap file access keys."""
+    """Reset password using valid reset token, re-wrapping all necessary FEKs."""
     global _users_cache, _admin_key
-    
+
     try:
         data = request.get_json()
         if not data:
@@ -672,10 +709,19 @@ def forgot_password_reset():
 
     username = token_data["username"]
 
+    # --- Load old admin key and user DB ---
+    if not _admin_key:
+        # Try to load from file; if absent, cannot proceed
+        if not ADMIN_KEY_FILE.exists():
+            return jsonify({"error": "Admin key not found. Contact administrator."}), 500
+        _admin_key = ADMIN_KEY_FILE.read_bytes()
+
+    old_admin_key = _admin_key  # keep a copy for unwrapping
+
     with _cache_lock:
         if _users_cache is None:
-            if _admin_key and USERS_FILE_ENC.exists():
-                _users_cache = load_users_from_encrypted(_admin_key)
+            if USERS_FILE_ENC.exists():
+                _users_cache = load_users_from_encrypted(old_admin_key)
             if _users_cache is None:
                 return jsonify({"error": "No user database"}), 400
 
@@ -683,178 +729,116 @@ def forgot_password_reset():
             return jsonify({"error": "User not found"}), 404
 
         user_data = _users_cache[username]
-        
-        # Get OLD encryption key before updating (needed for file re-wrapping)
-        # Unwrap the old user key from the stored wrapped version using admin key
-        old_user_enc_key = None
+
+        # ----- Unwrap the user's old encryption key using the admin key -----
         old_user_key_wrapped = user_data.get("user_key_wrapped")
-        if old_user_key_wrapped and _admin_key:
-            try:
-                old_user_enc_key = unwrap_fek(old_user_key_wrapped, _admin_key)
-            except Exception as e:
-                logger.error(f"Failed to unwrap old user key: {e}")
-                old_user_enc_key = None
-        else:
-            logger.warning(f"No wrapped key available for user {username}")
-        
-        # Hash new password
-        new_hashed = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
-        
-        # Derive new encryption key from new password
+        if not old_user_key_wrapped:
+            return jsonify({"error": "User key not available. Cannot re-wrap files."}), 500
+        try:
+            old_user_key = unwrap_fek(old_user_key_wrapped, old_admin_key)
+        except Exception as e:
+            logger.error(f"Failed to unwrap user key for {username}: {e}")
+            return jsonify({"error": "Failed to retrieve old user key"}), 500
+
+        # Determine if this user is the admin
+        is_admin_user = (user_data.get("role") == "admin")
+
+        # ----- Derive new user encryption key -----
         new_kdf_salt = secrets.token_bytes(16)
         new_user_enc_key = derive_key(new_password, new_kdf_salt)
-        
-        # Check if this is admin password reset - need special handling
-        is_admin_reset = user_data.get("role") == "admin"
-        
-        # Re-wrap user's encryption key with admin key
-        if not _admin_key:
-            return jsonify({"error": "Admin key not available"}), 500
-        
-        # For admin reset: wrap new admin key with itself (self-wrapped)
-        # For user reset: wrap user key with admin key
-        if is_admin_reset:
-            new_wrapped_key = wrap_fek(new_user_enc_key, new_user_enc_key)
-        else:
-            new_wrapped_key = wrap_fek(new_user_enc_key, _admin_key)
-        
-        # Update user data
-        _users_cache[username]["password_hash"] = new_hashed
-        _users_cache[username]["kdf_salt"] = new_kdf_salt.hex()
-        _users_cache[username]["user_key_wrapped"] = new_wrapped_key
-        
-        # Save updated users database
-        try:
-            save_users_encrypted(_users_cache, _admin_key)
-        except Exception as e:
-            logger.error(f"Failed to save user database after password reset: {e}")
-            return jsonify({"error": "Failed to save new password"}), 500
 
-        # Invalidate the reset token
-        del app.reset_tokens[reset_token]
+        # --- Perform re-wrapping based on role ---
+        vault_path = _vault_folder
 
-        # Re-wrap file access keys for this user
-        files_updated = 0
-        files_error = 0
-        
-        if _vault_folder and _vault_folder.exists():
-            # Find all .crypt_meta files and update access entries for this user
-            for meta_path in _vault_folder.rglob(".crypt_meta"):
+        if is_admin_user:
+            # ---- Admin password reset ----
+            new_admin_key = new_user_enc_key   # admin key is the same as their encryption key
+
+            # 1. Re-wrap all user keys in the database (including admin's own)
+            updated_users = {}
+            for uname, udata in _users_cache.items():
+                wrapped_key = udata.get("user_key_wrapped")
+                if not wrapped_key:
+                    # Should not happen for any user, but skip if missing
+                    updated_users[uname] = udata
+                    continue
                 try:
-                    meta = json.loads(meta_path.read_text())
-                    folder_path = meta_path.parent
-                    modified = False
-                    
-                    for enc_rel_path, file_info in meta.get("files", {}).items():
-                        # Find this user's access entry
-                        access_idx = None
-                        for idx, entry in enumerate(file_info["access_entries"]):
-                            if entry["user"] == username:
-                                access_idx = idx
-                                break
-                        
-                        if access_idx is not None and old_user_enc_key:
-                            # Unwrap FEK with old key and re-wrap with new key
-                            try:
-                                fek = unwrap_fek(file_info["access_entries"][access_idx]["wrapped_fek"], old_user_enc_key)
-                                new_wrapped_fek = wrap_fek(fek, new_user_enc_key)
-                                file_info["access_entries"][access_idx]["wrapped_fek"] = new_wrapped_fek
-                                modified = True
-                            except Exception as e:
-                                logger.error(f"Failed to re-wrap FEK for {enc_rel_path}: {e}")
-                                files_error += 1
-                    
-                    if modified:
-                        meta_path.write_text(json.dumps(meta, indent=2))
-                        files_updated += 1
-                        
+                    user_key = unwrap_fek(wrapped_key, old_admin_key)
                 except Exception as e:
-                    logger.error(f"Error processing metadata file {meta_path}: {e}")
-        
-        # If this is the ADMIN, we need to handle special cases:
-        # 1. Re-wrap ALL user keys in DB from old admin key to new admin key
-        # 2. Re-wrap ALL file-level FEK entries where admin has access
-        if is_admin_reset:
-            # Generate new recovery key and save it
-            new_recovery_key = generate_recovery_key()
-            save_admin_recovery_key(new_recovery_key)
-            logger.info(f"Admin recovery key regenerated after password reset")
-            
-            # Store old admin key temporarily BEFORE changing it
-            old_admin_key = _admin_key
-            
-            # Re-wrap all user keys with new admin key
-            for other_username, other_user_data in _users_cache.items():
-                if other_user_data.get("user_key_wrapped"):
-                    try:
-                        # Unwrap with OLD admin key
-                        user_key = unwrap_fek(other_user_data["user_key_wrapped"], old_admin_key)
-                        # Re-wrap with NEW admin key
-                        other_user_data["user_key_wrapped"] = wrap_fek(user_key, new_user_enc_key)
-                    except Exception as e:
-                        logger.error(f"Failed to re-wrap key for user {other_username}: {e}")
-                        files_error += 1
-            
-            # Now update admin key to new one
-            _admin_key = new_user_enc_key
-            save_admin_key(new_user_enc_key)
-            
-            # Save updated users database with new admin key wrapping
-            try:
-                save_users_encrypted(_users_cache, _admin_key)
-            except Exception as e:
-                logger.error(f"Failed to save user database after admin key change: {e}")
-                return jsonify({"error": "Failed to update user keys"}), 500
-            
-            # Re-wrap all file-level FEK entries where admin has access
-            # Admin's personal key changed, so all admin access_entries need re-wrapping
-            if _vault_folder and _vault_folder.exists():
-                admin_files_updated = 0
-                admin_files_error = 0
-                for meta_path in _vault_folder.rglob(".crypt_meta"):
-                    try:
-                        meta = json.loads(meta_path.read_text())
-                        modified = False
-                        
-                        for enc_rel_path, file_info in meta.get("files", {}).items():
-                            # Find admin's access entry
-                            access_idx = None
-                            for idx, entry in enumerate(file_info["access_entries"]):
-                                if entry["user"] == username:
-                                    access_idx = idx
-                                    break
-                            
-                            if access_idx is not None:
-                                # Unwrap FEK with old admin key and re-wrap with new admin key
-                                try:
-                                    fek = unwrap_fek(file_info["access_entries"][access_idx]["wrapped_fek"], old_admin_key)
-                                    new_wrapped_fek = wrap_fek(fek, new_user_enc_key)
-                                    file_info["access_entries"][access_idx]["wrapped_fek"] = new_wrapped_fek
-                                    modified = True
-                                except Exception as e:
-                                    logger.error(f"Failed to re-wrap admin FEK for {enc_rel_path}: {e}")
-                                    admin_files_error += 1
-                        
-                        if modified:
-                            meta_path.write_text(json.dumps(meta, indent=2))
-                            admin_files_updated += 1
-                            
-                    except Exception as e:
-                        logger.error(f"Error processing metadata file {meta_path} for admin re-wrap: {e}")
-                
-                files_updated += admin_files_updated
-                files_error += admin_files_error
-                logger.info(f"Admin password reset complete. Re-wrapped {len(_users_cache)} user keys and {admin_files_updated} file entries.")
-            else:
-                logger.info(f"Admin password reset complete. Re-wrapped {len(_users_cache)} user keys.")
+                    logger.error(f"Failed to unwrap key for user {uname} during admin reset: {e}")
+                    return jsonify({"error": f"Failed to re-wrap key for {uname}"}), 500
+                # Re-wrap with new admin key
+                new_wrapped = wrap_fek(user_key, new_admin_key)
+                udata["user_key_wrapped"] = new_wrapped
+                updated_users[uname] = udata
 
-    logger.info(f"Password reset successful for user: {username}. Files updated: {files_updated}, Errors: {files_error}")
-    return jsonify({
-        "success": True,
-        "message": "Password has been reset successfully. You can now log in with your new password.",
-        "files_updated": files_updated,
-        "files_error": files_error
-    })
+            # 2. Update the admin's own password hash and salt
+            user_data["password_hash"] = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+            user_data["kdf_salt"] = new_kdf_salt.hex()
+
+            # 3. Save the updated user database with the new admin key
+            try:
+                save_users_encrypted(updated_users, new_admin_key)
+            except Exception as e:
+                logger.error(f"Failed to save user database after admin reset: {e}")
+                return jsonify({"error": "Failed to save user database"}), 500
+
+            # 4. Update _admin_key and save to file
+            _admin_key = new_admin_key
+            save_admin_key(new_admin_key)
+
+            # 5. Re-wrap all file FEKs for the admin (if vault exists)
+            if vault_path and vault_path.exists():
+                try:
+                    rewrap_feks_for_user(vault_path, username, old_admin_key, new_admin_key)
+                except Exception as e:
+                    logger.error(f"Failed to re-wrap admin's file FEKs: {e}")
+                    # We already saved DB, but file re-wrap failed; return error but state is partially updated
+                    return jsonify({"error": "Admin password reset partially completed. File FEKs could not be re-wrapped."}), 500
+
+            # 6. Regenerate admin recovery key (encrypted with new admin key)
+            new_recovery = generate_recovery_key()
+            save_admin_recovery_key(new_recovery)
+
+            # Invalidate reset token
+            del app.reset_tokens[reset_token]
+
+            logger.info(f"Admin password reset successful for {username}")
+            return jsonify({"success": True, "message": "Admin password reset complete. All keys and files updated."})
+
+        else:
+            # ---- Regular user password reset ----
+            # 1. Re-wrap all FEKs for this user (using old_user_key -> new_user_enc_key)
+            if vault_path and vault_path.exists():
+                try:
+                    rewrap_feks_for_user(vault_path, username, old_user_key, new_user_enc_key)
+                except Exception as e:
+                    logger.error(f"Failed to re-wrap user's file FEKs: {e}")
+                    return jsonify({"error": "Failed to re-wrap file access keys. Password not changed."}), 500
+
+            # 2. Update user's password hash and salt
+            user_data["password_hash"] = bcrypt.hashpw(new_password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+            user_data["kdf_salt"] = new_kdf_salt.hex()
+
+            # 3. Re-wrap the user's own encryption key with the (unchanged) admin key
+            new_user_key_wrapped = wrap_fek(new_user_enc_key, old_admin_key)
+            user_data["user_key_wrapped"] = new_user_key_wrapped
+
+            # 4. Save the updated user database (still encrypted with old admin key)
+            try:
+                save_users_encrypted(_users_cache, old_admin_key)
+            except Exception as e:
+                logger.error(f"Failed to save user database after user reset: {e}")
+                return jsonify({"error": "Failed to save user database"}), 500
+
+            # Invalidate reset token
+            del app.reset_tokens[reset_token]
+
+            logger.info(f"User password reset successful for {username}")
+            return jsonify({"success": True, "message": "Password reset complete. Your files remain accessible."})
+
+    # Should never reach here
+    return jsonify({"error": "Unexpected error"}), 500
 
 # ------------------------------------------------------------
 # Encryption – full version with FEK wrapping functions
