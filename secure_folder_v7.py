@@ -11,6 +11,7 @@ from datetime import datetime, timedelta
 from typing import Optional, Dict, Any, Tuple
 import time
 import logging
+import webview
 
 from flask import Flask, request, jsonify, session, send_from_directory  # pyright: ignore[reportMissingImports]
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # pyright: ignore[reportMissingImports]
