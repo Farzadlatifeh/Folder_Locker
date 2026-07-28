@@ -219,23 +219,28 @@
         
         // Client-side validation
         if (!username) {
-            setStatus('Username is required', 'error');
+            showToast('Username is required', 'error');
             return;
         }
         if (username.length < 3 || username.length > 32) {
-            setStatus('Username must be between 3 and 32 characters', 'error');
+            showToast('Username must be between 3 and 32 characters', 'error');
             return;
         }
         if (!/^[a-zA-Z0-9_]+$/.test(username)) {
-            setStatus('Username can only contain letters, numbers, and underscores', 'error');
+            showToast('Username can only contain letters, numbers, and underscores', 'error');
             return;
         }
         if (!password || password.length < 8) {
-            setStatus('Password must be at least 8 characters', 'error');
+            showToast('Password must be at least 8 characters', 'error');
             return;
         }
         if (password.length > 128) {
-            setStatus('Password is too long (max 128 characters)', 'error');
+            showToast('Password is too long (max 128 characters)', 'error');
+            return;
+        }
+        // Password strength validation
+        if (!/(?=.*[a-z])(?=.*[A-Z])(?=.*\d)/.test(password)) {
+            showToast('Password must contain at least one uppercase letter, one lowercase letter, and one number', 'error');
             return;
         }
 
@@ -245,23 +250,24 @@
         });
         const data = await res.json();
         if (res.ok) {
-            setStatus(data.message, 'success');
+            showToast(data.message, 'success');
             setTimeout(() => {
-                alert(data.message);
                 showLogin();
-                setStatus('');
-            }, 500);
+                document.getElementById('regUser').value = '';
+                document.getElementById('regPass').value = '';
+            }, 1500);
         } else {
             // Show specific error messages from server
             let errorMsg = data.error || 'Registration failed';
             if (res.status === 409) {
-                errorMsg = 'Username already exists. Please choose a different username.';
+                showToast('Username already exists. Please choose a different username.', 'error');
             } else if (errorMsg.includes('Username')) {
-                // Keep server-side username validation messages
+                showToast(errorMsg, 'error');
             } else if (errorMsg.includes('Password') || errorMsg.includes('password')) {
-                // Keep server-side password validation messages
+                showToast(errorMsg, 'error');
+            } else {
+                showToast(errorMsg, 'error');
             }
-            setStatus(errorMsg, 'error');
         }
     }
 
@@ -271,7 +277,7 @@
         
         // Client-side validation
         if (!username || !password) {
-            setStatus('Please enter both username and password', 'error');
+            showToast('Please enter both username and password', 'error');
             return;
         }
 
@@ -307,19 +313,23 @@
                 document.getElementById('adminPanel').style.display = 'none';
                 document.getElementById('dangerZone').style.display = 'none';
             }
-            setStatus('Login successful!', 'success');
-            setTimeout(() => setStatus(''), 3000);
+            showToast('Login successful!', 'success');
+            setTimeout(() => {
+                document.getElementById('loginUser').value = '';
+                document.getElementById('loginPass').value = '';
+            }, 1500);
         } else {
             // Show specific error messages from server
             let errorMsg = data.error || 'Login failed';
             if (errorMsg.includes('credentials')) {
-                errorMsg = 'Invalid username or password';
+                showToast('Invalid username or password', 'error');
             } else if (errorMsg.includes('rate')) {
-                errorMsg = 'Too many failed attempts. Please try again later.';
+                showToast('Too many failed attempts. Please try again later.', 'error');
             } else if (errorMsg.includes('database')) {
-                errorMsg = 'No user database. Please register first.';
+                showToast('No user database. Please register first.', 'error');
+            } else {
+                showToast(errorMsg, 'error');
             }
-            setStatus(errorMsg, 'error');
         }
     }
 
