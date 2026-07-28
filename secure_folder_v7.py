@@ -519,6 +519,8 @@ def get_security_questions():
 @app.route("/forgot_password/questions", methods=["POST"])
 def forgot_password_get_questions():
     """Get user's security questions for password recovery (without revealing answers)."""
+    global _users_cache
+    
     try:
         data = request.get_json()
         if not data:
