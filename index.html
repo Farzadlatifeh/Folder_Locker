@@ -145,8 +145,11 @@
             </div>
         </div>
 
+        <button class="danger" onclick="logout()" style="margin-bottom: 20px;">👋 Logout</button>
+        <hr style="border: none; border-top: 1px solid #444; margin: 20px 0;">
+
         <!-- Danger Zone -->
-        <div id="dangerZone" class="admin-panel" style="display:none; border-top: 2px solid var(--danger); margin-top: 30px; padding-top: 20px;">
+        <div id="dangerZone" class="admin-panel" style="display:none; border-top: 2px solid var(--danger); margin-top: 10px; padding-top: 20px;">
             <h3 style="color: var(--danger);">⚠️ Danger Zone</h3>
             <p class="small" style="color: var(--text-muted); margin-bottom: 15px;">
                 Resetting the app will remove all stored users, passwords, vault directory settings, and encryption keys. 
@@ -155,8 +158,6 @@
             <button class="danger" onclick="confirmResetApp()">🗑️ Reset App to Initial Setup</button>
         </div>
 
-        <hr style="border: none; border-top: 1px solid #444; margin: 25px 0;">
-        <button class="danger" onclick="logout()" style="margin-top:0;">👋 Logout</button>
         <div id="statusBox" class="status"></div>
     </div>
 </div>
