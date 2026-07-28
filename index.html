@@ -68,15 +68,15 @@
         <h2>🔐 Locker login page</h2>
 
         <form id="loginForm" onsubmit="handleLogin(event)">
-            <input type="text" id="loginUser" placeholder="Username" required>
-            <input type="password" id="loginPass" placeholder="Password" required>
+            <input type="text" id="loginUser" placeholder="Username" required autocomplete="username">
+            <input type="password" id="loginPass" placeholder="Password" required autocomplete="current-password">
             <button type="submit">Log In</button>
             <p class="small" style="text-align:center;">No account? <a href="#" onclick="showRegister()" style="color: #d7ec6e;">Register</a></p>
         </form>
 
         <form id="registerForm" style="display:none;" onsubmit="handleRegister(event)">
-            <input type="text" id="regUser" placeholder="Choose username">
-            <input type="password" id="regPass" placeholder="Choose password">
+            <input type="text" id="regUser" placeholder="Choose username" autocomplete="username">
+            <input type="password" id="regPass" placeholder="Choose password" autocomplete="new-password">
             <button type="submit">Register</button>
             <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
         </form>
@@ -116,14 +116,20 @@
             <h3>🛡️ Admin – File Access Control</h3>
 
             <div style="margin-bottom:15px;">
-                <strong>Registered Users (passwords visible)</strong>
+                <strong>Registered Users</strong>
                 <button onclick="loadUserList()" style="width:auto; margin-left:10px; background:#555;">↻ Refresh</button>
+                <div class="flex" style="margin-top:5px;">
+                    <input type="text" id="userSearchInput" placeholder="🔍 Search users..." onkeyup="filterUserList()" style="flex:1;">
+                </div>
                 <div id="userListDisplay" class="user-list-container">Loading...</div>
             </div>
 
             <div class="row">
                 <input type="text" id="fileInput" list="fileList" placeholder="Type file name (sub‑folder supported)">
                 <datalist id="fileList"></datalist>
+            </div>
+            <div class="flex" style="margin-bottom:10px;">
+                <input type="text" id="fileSearchInput" placeholder="🔍 Search files..." onkeyup="filterFileList()" style="flex:1;">
             </div>
 
             <div class="row">
@@ -212,7 +218,16 @@
                 setStatus('');
             }, 500);
         } else {
-            setStatus(data.error || 'Registration failed', 'error');
+            // Show specific error messages from server
+            let errorMsg = data.error || 'Registration failed';
+            if (res.status === 409) {
+                errorMsg = 'Username already exists. Please choose a different username.';
+            } else if (errorMsg.includes('Username')) {
+                // Keep server-side username validation messages
+            } else if (errorMsg.includes('Password') || errorMsg.includes('password')) {
+                // Keep server-side password validation messages
+            }
+            setStatus(errorMsg, 'error');
         }
     }
 
@@ -248,6 +263,7 @@
                     document.getElementById('vaultFolderPath').value = currentUser.folder;
                     document.getElementById('vaultStatus').textContent = 'Vault is set.';
                 }
+                loadUserList();
             } else {
                 // User: just show the vault folder (or a message if not set)
                 document.getElementById('adminVaultSetup').style.display = 'none';
@@ -258,7 +274,16 @@
             setStatus('Login successful!', 'success');
             setTimeout(() => setStatus(''), 3000);
         } else {
-            setStatus(data.error || 'Login failed', 'error');
+            // Show specific error messages from server
+            let errorMsg = data.error || 'Login failed';
+            if (errorMsg.includes('credentials')) {
+                errorMsg = 'Invalid username or password';
+            } else if (errorMsg.includes('rate')) {
+                errorMsg = 'Too many failed attempts. Please try again later.';
+            } else if (errorMsg.includes('database')) {
+                errorMsg = 'No user database. Please register first.';
+            }
+            setStatus(errorMsg, 'error');
         }
     }
 
@@ -275,6 +300,9 @@
         return currentUser.folder || '';
     }
 
+    // Store all files for filtering
+    let allFilesData = [];
+
     async function loadFileList() {
         const folder = getFolder();
         const datalist = document.getElementById('fileList');
@@ -286,30 +314,83 @@
         });
         const data = await res.json();
         if (res.ok && data.files) {
-            data.files.forEach(f => {
-                const opt = document.createElement('option');
-                opt.value = f;
-                datalist.appendChild(opt);
-            });
+            allFilesData = data.files;
+            renderFileList(allFilesData);
         }
     }
+
+    function renderFileList(files) {
+        const datalist = document.getElementById('fileList');
+        datalist.innerHTML = '';
+        files.forEach(f => {
+            const opt = document.createElement('option');
+            opt.value = f;
+            datalist.appendChild(opt);
+        });
+    }
+
+    function filterFileList() {
+        const searchTerm = document.getElementById('fileSearchInput').value.toLowerCase();
+        const filtered = allFilesData.filter(f => f.toLowerCase().includes(searchTerm));
+        renderFileList(filtered);
+    }
+
+    // Store all users for filtering
+    let allUsersData = {};
 
     async function loadUserList() {
         if (currentUser.role !== 'admin') return;
         const res = await fetch(API+'admin/users_full');
         const users = await res.json();
+        allUsersData = users;
+        renderUserList(users);
+        renderUserSelect(users);
+    }
+
+    function renderUserList(users) {
         const displayDiv = document.getElementById('userListDisplay');
-        const select = document.getElementById('userSelect');
         let html = '';
-        select.innerHTML = '<option value="">-- Select user --</option>';
         for (const [username, data] of Object.entries(users)) {
-            html += `<div class="user-entry"><span>${username}</span><span style="color:#aaa;">${data.password || 'N/A'}</span></div>`;
+            const passwordShown = data.showPassword ? (data.password || 'N/A') : '••••••••';
+            const visibilityIcon = data.showPassword ? '🙈' : '👁️';
+            html += `<div class="user-entry" style="align-items:center;">
+                <span>${username}</span>
+                <div class="flex" style="gap:5px;align-items:center;">
+                    <span style="color:#aaa;font-family:monospace;">${passwordShown}</span>
+                    <button onclick="togglePasswordVisibility('${username}')" style="width:auto;padding:4px 8px;font-size:12px;background:#555;">${visibilityIcon}</button>
+                </div>
+            </div>`;
+        }
+        displayDiv.innerHTML = html || 'No users found.';
+    }
+
+    function renderUserSelect(users) {
+        const select = document.getElementById('userSelect');
+        select.innerHTML = '<option value="">-- Select user --</option>';
+        for (const username of Object.keys(users)) {
             const opt = document.createElement('option');
             opt.value = username;
             opt.textContent = username;
             select.appendChild(opt);
         }
-        displayDiv.innerHTML = html || 'No users found.';
+    }
+
+    function filterUserList() {
+        const searchTerm = document.getElementById('userSearchInput').value.toLowerCase();
+        const filtered = {};
+        for (const [username, data] of Object.entries(allUsersData)) {
+            if (username.toLowerCase().includes(searchTerm)) {
+                filtered[username] = data;
+            }
+        }
+        renderUserList(filtered);
+    }
+
+    function togglePasswordVisibility(username) {
+        if (allUsersData[username]) {
+            allUsersData[username].showPassword = !allUsersData[username].showPassword;
+            renderUserList(allUsersData);
+        }
     }
 
     document.getElementById('folderPath').addEventListener('blur', () => {

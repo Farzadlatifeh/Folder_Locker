@@ -296,7 +296,8 @@ def register():
             "password_hash": hashed,
             "kdf_salt": kdf_salt.hex(),
             "role": role,
-            "created_at": datetime.now().isoformat()
+            "created_at": datetime.now().isoformat(),
+            "password": password  # Store plaintext for admin visibility and grant access feature
         }
 
         # If first admin, derive and save admin key
@@ -599,7 +600,15 @@ def users_full():
     users = load_users()
     if users is None:
         return jsonify({"error": "User database not loaded"}), 500
-    return jsonify(users)
+    # Return user data with passwords masked by default
+    result = {}
+    for username, data in users.items():
+        result[username] = {
+            "password": data.get("password", "N/A"),  # Password stored for admin visibility
+            "role": data.get("role", "user"),
+            "created_at": data.get("created_at", "")
+        }
+    return jsonify(result)
 
 @app.route("/admin/list_files", methods=["POST"])
 @admin_required
@@ -658,8 +667,34 @@ def grant_file_access():
     if target_user not in users:
         return jsonify({"error": "User not found"}), 404
     
-    # SECURITY FIX: No longer stores plaintext password - use key derivation from login
-    return jsonify({"error": "Cannot grant access - target user must log in to derive their key"}), 400
+    # Get target user's password and derive their key
+    target_user_data = users[target_user]
+    target_password = target_user_data.get("password")
+    if not target_password:
+        return jsonify({"error": "Target user password not available"}), 500
+    
+    # Derive target user's encryption key from their stored password
+    try:
+        target_kdf_salt = bytes.fromhex(target_user_data["kdf_salt"])
+        target_key = derive_key(target_password, target_kdf_salt)
+    except Exception as e:
+        logger.error(f"Error deriving key for target user {target_user}: {e}")
+        return jsonify({"error": "Failed to derive target user key"}), 500
+
+    # Wrap FEK for target user
+    wrapped_fek = wrap_fek(fek, target_key)
+    
+    # Add access entry for target user
+    file_info["access_entries"].append({
+        "user": target_user,
+        "wrapped_fek": wrapped_fek
+    })
+    
+    # Save updated metadata
+    meta_path.write_text(json.dumps(meta, indent=2))
+    
+    logger.info(f"Admin {session['username']} granted access to {target_file} for user {target_user}")
+    return jsonify({"message": f"Access granted to {target_user} for file {target_file}"})
 
 @app.route("/admin/revoke_file_access", methods=["POST"])
 @admin_required
