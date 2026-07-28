@@ -41,6 +41,7 @@
         }
         .info { color: var(--primary); }
         .error { color: var(--danger); }
+        .success { color: var(--success); }
         .small { font-size: 14px; color: var(--text-muted); }
         .flex { display: flex; gap: 10px; align-items: center; }
         .admin-panel {
@@ -175,22 +176,56 @@
     async function register() {
         const username = document.getElementById('regUser').value.trim();
         const password = document.getElementById('regPass').value;
+        
+        // Client-side validation
+        if (!username) {
+            setStatus('Username is required', 'error');
+            return;
+        }
+        if (username.length < 3 || username.length > 32) {
+            setStatus('Username must be between 3 and 32 characters', 'error');
+            return;
+        }
+        if (!/^[a-zA-Z0-9_]+$/.test(username)) {
+            setStatus('Username can only contain letters, numbers, and underscores', 'error');
+            return;
+        }
+        if (!password || password.length < 8) {
+            setStatus('Password must be at least 8 characters', 'error');
+            return;
+        }
+        if (password.length > 128) {
+            setStatus('Password is too long (max 128 characters)', 'error');
+            return;
+        }
+
         const res = await fetch(API+'register', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({username, password})
         });
         const data = await res.json();
         if (res.ok) {
-            alert(data.message);
-            showLogin();
+            setStatus(data.message, 'success');
+            setTimeout(() => {
+                alert(data.message);
+                showLogin();
+                setStatus('');
+            }, 500);
         } else {
-            setStatus(data.error, 'error');
+            setStatus(data.error || 'Registration failed', 'error');
         }
     }
 
     async function login() {
         const username = document.getElementById('loginUser').value.trim();
         const password = document.getElementById('loginPass').value;
+        
+        // Client-side validation
+        if (!username || !password) {
+            setStatus('Please enter both username and password', 'error');
+            return;
+        }
+
         const res = await fetch(API+'login', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({username, password})
@@ -205,7 +240,7 @@
             if (data.role === 'admin') {
                 // Admin can set the vault folder
                 document.getElementById('adminVaultSetup').style.display = 'block';
-                document.getElementById('adminFolderInput').style.display = 'none';   // admin doesn't need a per‑op folder input if vault is set
+                document.getElementById('adminFolderInput').style.display = 'none';
                 document.getElementById('userFolderDisplay').style.display = 'none';
                 document.getElementById('adminPanel').style.display = 'block';
                 // If a vault folder already exists, show it
@@ -220,9 +255,10 @@
                 document.getElementById('userFolderPath').textContent = currentUser.folder || 'Not set yet – contact admin';
                 document.getElementById('adminPanel').style.display = 'none';
             }
-            setStatus('');
+            setStatus('Login successful!', 'success');
+            setTimeout(() => setStatus(''), 3000);
         } else {
-            setStatus(data.error, 'error');
+            setStatus(data.error || 'Login failed', 'error');
         }
     }
 
