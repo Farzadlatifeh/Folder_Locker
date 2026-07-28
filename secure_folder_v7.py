@@ -779,6 +779,92 @@ def set_vault():
     save_vault_folder(path)
     return jsonify({"message": f"Vault folder set to {path}"})
 
+@app.route("/admin/reset_app", methods=["POST"])
+@admin_required
+def reset_app():
+    """Reset app to initial setup by removing all stored data."""
+    global _users_cache, _admin_key, _vault_folder
+    
+    token = session.get("token")
+    if not token or token not in _session_keys:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_key = _session_keys[token]["key"]
+    
+    # First, decrypt any encrypted files in the vault folder
+    vault_path = _vault_folder
+    if vault_path and vault_path.exists():
+        try:
+            # Find all .enc files and decrypt them
+            for enc_file in vault_path.rglob("*.enc"):
+                try:
+                    # Try to get FEK from metadata
+                    parent_folder = enc_file.parent
+                    meta_path = parent_folder / ".crypt_meta"
+                    if meta_path.exists():
+                        meta = json.loads(meta_path.read_text())
+                        file_name = enc_file.name[:-4]  # Remove .enc suffix
+                        if file_name in meta.get("files", {}):
+                            file_info = meta["files"][file_name]
+                            # Find admin's access entry
+                            admin_entry = next((e for e in file_info["access_entries"] if e["user"] == session["username"]), None)
+                            if admin_entry:
+                                fek = unwrap_fek(admin_entry["wrapped_fek"], user_key)
+                                decrypt_file(enc_file, fek)
+                                logger.info(f"Decrypted file during reset: {enc_file}")
+                except Exception as e:
+                    logger.error(f"Error decrypting file {enc_file} during reset: {e}")
+            
+            # Remove .crypt_meta files
+            for meta_file in vault_path.rglob(".crypt_meta"):
+                try:
+                    meta_file.unlink()
+                    logger.info(f"Removed metadata file: {meta_file}")
+                except Exception as e:
+                    logger.error(f"Error removing metadata file {meta_file}: {e}")
+        except Exception as e:
+            logger.error(f"Error during vault decryption in reset: {e}")
+    
+    # Remove all stored data files
+    files_removed = []
+    try:
+        if ADMIN_KEY_FILE.exists():
+            ADMIN_KEY_FILE.unlink()
+            files_removed.append(str(ADMIN_KEY_FILE))
+            logger.info("Removed admin key file")
+    except Exception as e:
+        logger.error(f"Error removing admin key file: {e}")
+    
+    try:
+        if VAULT_FOLDER_FILE.exists():
+            VAULT_FOLDER_FILE.unlink()
+            files_removed.append(str(VAULT_FOLDER_FILE))
+            logger.info("Removed vault folder file")
+    except Exception as e:
+        logger.error(f"Error removing vault folder file: {e}")
+    
+    try:
+        if USERS_FILE_ENC.exists():
+            USERS_FILE_ENC.unlink()
+            files_removed.append(str(USERS_FILE_ENC))
+            logger.info("Removed users database file")
+    except Exception as e:
+        logger.error(f"Error removing users database file: {e}")
+    
+    # Clear in-memory caches
+    _users_cache = None
+    _admin_key = None
+    _vault_folder = None
+    
+    # Clear session
+    session.clear()
+    
+    logger.info(f"App reset completed by user {session.get('username', 'unknown')}. Files removed: {files_removed}")
+    
+    return jsonify({
+        "message": "App has been reset to initial setup. All users, passwords, and vault data have been removed.",
+        "files_removed": files_removed
+    })
+
 # ---------- Startup ----------
 if __name__ == "__main__":
     load_admin_key()
