@@ -284,8 +284,6 @@
         document.getElementById('registerSection').classList.remove('active');
         document.getElementById('forgotPasswordSection').classList.remove('active');
         document.getElementById('mainSection').classList.remove('active');
-        document.getElementById('fpUsernameDisplay').style.display='block';
-        document.getElementById('fpQuestionsContainer').style.display='block';
     }
     
     function showForgotPassword() {
@@ -296,15 +294,15 @@
         document.getElementById('fpUsernameStep').style.display='block';
         document.getElementById('fpVerifyStep').style.display='none';
         document.getElementById('fpResetStep').style.display='none';
-        document.getElementById('fpUsernameDisplay').style.display='block';
-        document.getElementById('fpQuestionsContainer').style.display='block';
         // Clear fields
         document.getElementById('fpUsername').value = '';
         document.getElementById('fpAnswer1').value = '';
         document.getElementById('fpAnswer2').value = '';
         document.getElementById('fpAnswer3').value = '';
-        document.querySelectorAll('[id^="fpQ"]').forEach(el => el.style.display = 'none');
-        document.querySelectorAll('[id^="fpA"]').forEach(el => el.style.display = 'none');
+        // Hide all question rows
+        ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
+            document.getElementById(id).style.display = 'none';
+        });
     }
 
     function handleLogin(e) {
