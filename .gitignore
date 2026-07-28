@@ -1,1 +1,9 @@
-Nothing needs to be added to .gitignore since the changes only include HTML files (test_fp.html and index.html) which are source code files and should not be ignored.
+```
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+*.env.*
+```
