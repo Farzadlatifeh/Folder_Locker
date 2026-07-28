@@ -67,8 +67,13 @@
             <p class="small" style="text-align:center;">No account? <a href="#" onclick="showRegister()" style="color: #d7ec6e;">Register</a></p>
             <p class="small" style="text-align:center; margin-top: 10px;"><a href="#" onclick="showForgotPassword()" style="color: #ff9f43;">Forgot Password?</a></p>
         </form>
+    </div>
 
-        <form id="registerForm" style="display:none;" onsubmit="handleRegister(event)">
+    <!-- Register Section -->
+    <div id="registerSection" class="section">
+        <h2>📝 Create New Account</h2>
+
+        <form id="registerForm" onsubmit="handleRegister(event)">
             <input type="text" id="regUser" placeholder="Choose username" autocomplete="username">
             <input type="password" id="regPass" placeholder="Choose password" autocomplete="new-password">
             
@@ -268,23 +273,22 @@
 
     function showRegister() {
         document.getElementById('authSection').classList.remove('active');
+        document.getElementById('registerSection').classList.add('active');
         document.getElementById('forgotPasswordSection').classList.remove('active');
-        document.getElementById('registerForm').style.display='block';
-        document.getElementById('registerForm').parentElement.classList.add('active');
+        document.getElementById('mainSection').classList.remove('active');
         loadSecurityQuestions();
     }
     
     function showLogin() {
         document.getElementById('authSection').classList.add('active');
+        document.getElementById('registerSection').classList.remove('active');
         document.getElementById('forgotPasswordSection').classList.remove('active');
         document.getElementById('mainSection').classList.remove('active');
-        document.getElementById('loginForm').style.display='block';
-        document.getElementById('registerForm').style.display='none';
     }
     
     function showForgotPassword() {
         document.getElementById('authSection').classList.remove('active');
-        document.getElementById('registerForm').style.display='none';
+        document.getElementById('registerSection').classList.remove('active');
         document.getElementById('forgotPasswordSection').classList.add('active');
         // Reset to username entry step
         document.getElementById('fpUsernameStep').style.display='block';

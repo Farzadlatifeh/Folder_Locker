@@ -1,13 +1,16 @@
 ```
-# Compiled Python files
+# Python
 __pycache__/
 *.pyc
+*.pyo
+*.pyd
 
 # Logs and temp files
 *.log
 *.tmp
+*.swp
 
-# Environment files
+# Environment
 .env
 .env.local
 *.env.*
@@ -25,17 +28,4 @@ node_modules/
 dist/
 build/
 target/
-
-# Coverage reports
-coverage/
-htmlcov/
-.coverage
-
-# Python cache
-.mypy_cache/
-.pytest_cache/
-
-# System files
-.DS_Store
-Thumbs.db
 ```
