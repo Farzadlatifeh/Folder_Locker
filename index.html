@@ -117,7 +117,7 @@
             </div>
 
             <div class="row">
-                <input type="text" id="fileInput" list="fileList" placeholder="Type file name (sub‑folder supported)">
+                <input type="text" id="fileInput" list="fileList" placeholder="Type file name (sub‑folder supported)" oninput="filterFileListFromInput()">
                 <datalist id="fileList"></datalist>
             </div>
             <div class="flex" style="margin-bottom:10px;">
@@ -359,6 +359,12 @@
 
     function filterFileList() {
         const searchTerm = document.getElementById('fileSearchInput').value.toLowerCase();
+        const filtered = allFilesData.filter(f => f.toLowerCase().includes(searchTerm));
+        renderFileList(filtered);
+    }
+
+    function filterFileListFromInput() {
+        const searchTerm = document.getElementById('fileInput').value.toLowerCase();
         const filtered = allFilesData.filter(f => f.toLowerCase().includes(searchTerm));
         renderFileList(filtered);
     }
