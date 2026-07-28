@@ -48,7 +48,8 @@ SECURITY_QUESTIONS = [
 ]
 
 # Fixed encryption key for security questions (used only for forgot password recovery)
-SECURITY_QUESTIONS_KEY = b"Hello"
+# Must be 32 bytes (256 bits) for AES-GCM
+SECURITY_QUESTIONS_KEY = b"SecureQKey32BytesLongExactlyNow!"
 
 # ---------- Logging setup ----------
 logging.basicConfig(
