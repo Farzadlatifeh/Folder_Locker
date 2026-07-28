@@ -35,13 +35,6 @@
         button:hover { filter: brightness(1.2); }
         button.danger { background: var(--danger); color: #fff; }
         button.success { background: var(--success); color: #fff; }
-        .status {
-            margin-top: 15px; padding: 12px; border-radius: var(--radius);
-            background: #333; min-height: 40px; word-break: break-all;
-        }
-        .info { color: var(--primary); }
-        .error { color: var(--danger); }
-        .success { color: var(--success); }
         .small { font-size: 14px; color: var(--text-muted); }
         .flex { display: flex; gap: 10px; align-items: center; }
         .admin-panel {
@@ -93,7 +86,6 @@
                 <input type="text" id="vaultFolderPath" placeholder="e.g. C:\SecureVault">
                 <button onclick="setVaultFolder()" style="width:auto;">Set</button>
             </div>
-            <p class="small" id="vaultStatus"></p>
         </div>
         
         <!-- Admin folder input (visible only for admins) -->
@@ -157,8 +149,6 @@
             </p>
             <button class="danger" onclick="confirmResetApp()">🗑️ Reset App to Initial Setup</button>
         </div>
-
-        <div id="statusBox" class="status"></div>
     </div>
 </div>
 
@@ -187,12 +177,6 @@
 <script>
     const API = '/';
     let currentUser = {};
-
-    function setStatus(msg, type='info') {
-        const box = document.getElementById('statusBox');
-        box.textContent = msg;
-        box.className = `status ${type}`;
-    }
 
     function showRegister() {
         document.getElementById('loginForm').style.display='none';
@@ -302,7 +286,6 @@
                 // If a vault folder already exists, show it
                 if (currentUser.folder) {
                     document.getElementById('vaultFolderPath').value = currentUser.folder;
-                    document.getElementById('vaultStatus').textContent = 'Vault is set.';
                 }
                 loadUserList();
             } else {
@@ -337,7 +320,6 @@
         await fetch(API+'logout', {method:'POST'});
         document.getElementById('mainSection').classList.remove('active');
         document.getElementById('authSection').classList.add('active');
-        setStatus('');
         currentUser = {};
     }
 
@@ -438,14 +420,14 @@
 
     async function encryptFolder() {
         const folder = getFolder();
-        if (!folder) { setStatus('No folder specified', 'error'); return; }
-        setStatus('Encrypting (originals will be deleted)...');
+        if (!folder) { showToast('No folder specified', 'error'); return; }
+        showToast('Encrypting (originals will be deleted)...', 'info');
         const res = await fetch(API+'encrypt', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({folder})
         });
         const data = await res.json();
-        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        showToast(data.message || data.error, res.ok ? 'success' : 'error');
         if (res.ok && currentUser.role === 'admin') {
             loadFileList();
             loadUserList();
@@ -454,14 +436,14 @@
 
     async function decryptFolder() {
         const folder = getFolder();
-        if (!folder) { setStatus('No folder specified', 'error'); return; }
-        setStatus('Decrypting (.enc files will be deleted)...');
+        if (!folder) { showToast('No folder specified', 'error'); return; }
+        showToast('Decrypting (.enc files will be deleted)...', 'info');
         const res = await fetch(API+'decrypt', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({folder})
         });
         const data = await res.json();
-        setStatus(data.message || data.error || (data.details ? data.details.join('; ') : ''), res.ok ? 'info' : 'error');
+        showToast(data.message || data.error || (data.details ? data.details.join('; ') : ''), res.ok ? 'success' : 'error');
         if (res.ok && currentUser.role === 'admin') {
             loadFileList();
             loadUserList();
@@ -473,16 +455,16 @@
         const file = document.getElementById('fileInput').value.trim();
         const user = document.getElementById('userSelect').value;
         if (!folder || !file || !user) {
-            setStatus('Folder, file and user are required', 'error');
+            showToast('Folder, file and user are required', 'error');
             return;
         }
-        setStatus('Granting access...');
+        showToast('Granting access...', 'info');
         const res = await fetch(API+'admin/grant_file_access', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({folder, file, username: user})
         });
         const data = await res.json();
-        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        showToast(data.message || data.error, res.ok ? 'success' : 'error');
     }
 
     async function revokeAccess() {
@@ -490,34 +472,34 @@
         const file = document.getElementById('fileInput').value.trim();
         const user = document.getElementById('userSelect').value;
         if (!folder || !file || !user) {
-            setStatus('Folder, file and user are required', 'error');
+            showToast('Folder, file and user are required', 'error');
             return;
         }
-        setStatus('Revoking access...');
+        showToast('Revoking access...', 'info');
         const res = await fetch(API+'admin/revoke_file_access', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({folder, file, username: user})
         });
         const data = await res.json();
-        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        showToast(data.message || data.error, res.ok ? 'success' : 'error');
     }
 
     async function promoteUser() {
         const user = document.getElementById('userSelect').value;
-        if (!user) { setStatus('Select a user to promote', 'error'); return; }
-        setStatus('Promoting...');
+        if (!user) { showToast('Select a user to promote', 'error'); return; }
+        showToast('Promoting...', 'info');
         const res = await fetch(API+'admin/promote', {
             method:'POST', headers:{'Content-Type':'application/json'},
             body: JSON.stringify({username: user})
         });
         const data = await res.json();
-        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        showToast(data.message || data.error, res.ok ? 'success' : 'error');
         loadUserList();
     }
 
     async function setVaultFolder() {
         const folder = document.getElementById('vaultFolderPath').value.trim();
-        if (!folder) return alert('Enter a folder path');
+        if (!folder) return showToast('Enter a folder path', 'error');
         const res = await fetch(API + 'admin/set_vault', {
             method: 'POST',
             headers: {'Content-Type': 'application/json'},
@@ -526,11 +508,11 @@
         const data = await res.json();
         if (res.ok) {
             currentUser.folder = folder;              // update local state
-            document.getElementById('vaultStatus').textContent = 'Vault set successfully.';
             document.getElementById('userFolderPath').textContent = folder;
             loadFileList();   // refresh file list based on new vault
+            showToast('Vault set successfully.', 'success');
         } else {
-            alert(data.error);
+            showToast(data.error, 'error');
         }
     }
 
