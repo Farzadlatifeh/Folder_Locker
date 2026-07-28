@@ -115,10 +115,18 @@
     <div id="forgotPasswordSection" class="section">
         <h2>🔑 Password Recovery</h2>
         
-        <!-- Step 1: Verify Identity -->
-        <div id="fpVerifyStep">
-            <p class="small" style="margin-bottom: 15px; color: var(--text-muted);">Enter your username and answer your security questions to verify your identity.</p>
+        <!-- Step 1: Enter Username -->
+        <div id="fpUsernameStep">
+            <p class="small" style="margin-bottom: 15px; color: var(--text-muted);">Enter your username to verify your identity.</p>
             <input type="text" id="fpUsername" placeholder="Username" autocomplete="username">
+            <button onclick="checkUsernameExists()" style="margin-top: 15px;">Continue</button>
+            <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
+        </div>
+        
+        <!-- Step 2: Verify Identity with Security Questions -->
+        <div id="fpVerifyStep" style="display:none;">
+            <p class="small" style="margin-bottom: 15px; color: var(--text-muted);">Answer your security questions to verify your identity.</p>
+            <p id="fpUsernameDisplay" style="color: var(--primary); font-weight: bold; margin-bottom: 10px;"></p>
             
             <div id="fpQuestionsContainer" style="margin-top: 15px;">
                 <div class="row" id="fpQ1Row" style="display:none;">
@@ -144,10 +152,10 @@
             </div>
             
             <button onclick="verifySecurityAnswers()" style="margin-top: 15px;">Verify Answers</button>
-            <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
+            <p class="small" style="text-align:center;"><a href="#" onclick="showForgotPassword()" style="color: #d7ec6e;">Back to username entry</a></p>
         </div>
         
-        <!-- Step 2: Reset Password -->
+        <!-- Step 3: Reset Password -->
         <div id="fpResetStep" style="display:none;">
             <p class="small" style="margin-bottom: 15px; color: var(--success);">✓ Identity verified! You can now reset your password.</p>
             <input type="password" id="fpNewPassword" placeholder="New Password" autocomplete="new-password">
@@ -278,7 +286,9 @@
         document.getElementById('authSection').classList.remove('active');
         document.getElementById('registerForm').style.display='none';
         document.getElementById('forgotPasswordSection').classList.add('active');
-        document.getElementById('fpVerifyStep').style.display='block';
+        // Reset to username entry step
+        document.getElementById('fpUsernameStep').style.display='block';
+        document.getElementById('fpVerifyStep').style.display='none';
         document.getElementById('fpResetStep').style.display='none';
         // Clear fields
         document.getElementById('fpUsername').value = '';
@@ -768,8 +778,60 @@
 
     // Forgot Password Functions
     let fpResetToken = null;
+    
+    // Check if username exists and load security questions
+    async function checkUsernameExists() {
+        const username = document.getElementById('fpUsername').value.trim().toLowerCase();
+        if (!username) {
+            showToast('Please enter your username', 'error');
+            return;
+        }
+        
+        showToast('Checking username...', 'info');
+        
+        try {
+            const res = await fetch(API + 'forgot_password/questions', {
+                method: 'POST',
+                headers: {'Content-Type': 'application/json'},
+                body: JSON.stringify({ username })
+            });
+            const data = await res.json();
+            
+            if (res.ok && data.success) {
+                // Username exists, show security questions
+                const questions = data.questions;
+                
+                // Hide username step, show verify step
+                document.getElementById('fpUsernameStep').style.display = 'none';
+                document.getElementById('fpVerifyStep').style.display = 'block';
+                document.getElementById('fpUsernameDisplay').textContent = 'Username: ' + username;
+                
+                // Hide all question rows first
+                ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
+                    document.getElementById(id).style.display = 'none';
+                });
+                
+                // Show only the questions this user has set
+                questions.forEach((q, index) => {
+                    const qRow = document.getElementById(`fpQ${index + 1}Row`);
+                    const aRow = document.getElementById(`fpA${index + 1}Row`);
+                    const qText = document.getElementById(`fpQuestion${index + 1}`);
+                    
+                    qText.textContent = q;
+                    qRow.style.display = 'flex';
+                    aRow.style.display = 'flex';
+                });
+                
+                showToast('Username found. Please answer your security questions.', 'success');
+            } else {
+                showToast(data.error || 'Username not found', 'error');
+            }
+        } catch (error) {
+            showToast('Error: ' + error.message, 'error');
+        }
+    }
 
-    // Load user's security questions for password recovery
+    // Load user's security questions for password recovery (kept for compatibility but not used)
     async function loadUserSecurityQuestions(username) {
         try {
             console.log('Fetching questions for username:', username);
@@ -910,40 +972,7 @@
         }
     }
 
-    // Add event listener to fpUsername field to load security questions when username is entered
-    document.addEventListener('DOMContentLoaded', function() {
-        const fpUsernameInput = document.getElementById('fpUsername');
-        if (fpUsernameInput) {
-            let debounceTimer;
-            fpUsernameInput.addEventListener('input', function() {
-                clearTimeout(debounceTimer);
-                const username = this.value.trim().toLowerCase();
-                console.log('Username input changed:', username);
-                if (username.length >= 2) {
-                    debounceTimer = setTimeout(async () => {
-                        console.log('Calling loadUserSecurityQuestions for:', username);
-                        const loaded = await loadUserSecurityQuestions(username);
-                        console.log('loadUserSecurityQuestions returned:', loaded);
-                        if (!loaded) {
-                            // Hide all question rows if user not found or error
-                            console.log('Hiding question rows because loaded=false');
-                            ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
-                                document.getElementById(id).style.display = 'none';
-                            });
-                        }
-                    }, 500);
-                } else {
-                    console.log('Username too short, hiding questions');
-                    // Hide all question rows if username is too short
-                    ['fpQ1Row', 'fpQ2Row', 'fpQ3Row', 'fpA1Row', 'fpA2Row', 'fpA3Row'].forEach(id => {
-                        document.getElementById(id).style.display = 'none';
-                    });
-                }
-            });
-        } else {
-            console.error('fpUsername input element not found!');
-        }
-    });
+    // Remove old event listener since we now use checkUsernameExists() button click instead
 </script>
 </body>
 </html>
