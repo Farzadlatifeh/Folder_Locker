@@ -564,6 +564,8 @@ def forgot_password_get_questions():
 @app.route("/forgot_password/verify", methods=["POST"])
 def forgot_password_verify():
     """Verify security question answers for password reset."""
+    global _users_cache
+    
     try:
         data = request.get_json()
         if not data:
