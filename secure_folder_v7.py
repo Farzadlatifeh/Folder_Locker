@@ -9,6 +9,7 @@ from threading import RLock, Thread
 from datetime import datetime, timedelta
 from typing import Optional, Dict, Any
 import time
+import webview
 
 from flask import Flask, request, jsonify, session, send_from_directory  # pyright: ignore[reportMissingImports]
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # pyright: ignore[reportMissingImports]
