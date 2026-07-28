@@ -1,60 +1,66 @@
 import os
 import json
 import secrets
+import hmac
+import hashlib
 from pathlib import Path
 from functools import wraps
-import threading
-import webview # pyright: ignore[reportMissingImports]
+from threading import RLock, Thread
+from datetime import datetime, timedelta
+from typing import Optional, Dict, Any
 import time
 
-from flask import Flask, request, jsonify, session, send_from_directory # pyright: ignore[reportMissingImports]
-from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC # pyright: ignore[reportMissingImports]
-from cryptography.hazmat.primitives import hashes # pyright: ignore[reportMissingImports]
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM # type: ignore[reportMissingImports]
-import bcrypt # type: ignore[reportMissingImports]
+from flask import Flask, request, jsonify, session, send_from_directory  # pyright: ignore[reportMissingImports]
+from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # pyright: ignore[reportMissingImports]
+from cryptography.hazmat.primitives import hashes  # pyright: ignore[reportMissingImports]
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore[reportMissingImports]
+import bcrypt  # type: ignore[reportMissingImports]
 
 # ---------- Configuration ----------
-# BASE_VAULT = Path("C:/SecureVault")          # default user vault root
-ADMIN_KEY_FILE = Path("admin_key.bin")       # stores the admin's encryption key
+ADMIN_KEY_FILE = Path("admin_key.bin")
+VAULT_FOLDER_FILE = Path("vault_folder.txt")
+USERS_FILE_ENC = Path("users.json.enc")
+SESSION_TIMEOUT = timedelta(hours=2)
+MAX_LOGIN_ATTEMPTS = 5
+LOCKOUT_DURATION = timedelta(minutes=15)
+
+# ---------- Thread-safe caches ----------
+_cache_lock = RLock()
+_session_keys: Dict[str, Dict[str, Any]] = {}
+_users_cache: Optional[Dict[str, Any]] = None
+_admin_key: Optional[bytes] = None
+_vault_folder: Optional[Path] = None
+_login_attempts: Dict[str, list] = {}
 
 app = Flask(__name__)
-app.secret_key = secrets.token_hex(32)
-
-USERS_FILE_ENC = Path("users.json.enc")
-USERS_FILE_PLAIN = Path("users.json")
-
-session_keys = {}              # token → derived key (per session)
-users_cache = None             # decrypted user database (always loaded after first admin)
-admin_key = None               # permanent admin key (loaded from file at startup)
-
-# NEW: global vault folder, set by admin
-vault_folder: Path | None = None
-VAULT_FOLDER_FILE = Path("vault_folder.txt")   # persist across restarts
+app.secret_key = secrets.token_bytes(32)
+app.config['SESSION_COOKIE_HTTPONLY'] = True
+app.config['SESSION_COOKIE_SAMESITE'] = 'Lax'
 
 def load_vault_folder():
-    global vault_folder
+    global _vault_folder
     if VAULT_FOLDER_FILE.exists():
-        vault_folder = Path(VAULT_FOLDER_FILE.read_text().strip())
+        _vault_folder = Path(VAULT_FOLDER_FILE.read_text().strip())
     else:
-        vault_folder = None
+        _vault_folder = None
 
 def save_vault_folder(path: Path):
     VAULT_FOLDER_FILE.write_text(str(path))
-    global vault_folder
-    vault_folder = path
+    global _vault_folder
+    _vault_folder = path
 
 # ---------- Admin key persistence ----------
 def load_admin_key():
-    global admin_key
+    global _admin_key
     if ADMIN_KEY_FILE.exists():
-        admin_key = ADMIN_KEY_FILE.read_bytes()
+        _admin_key = ADMIN_KEY_FILE.read_bytes()
         return True
     return False
 
 def save_admin_key(key: bytes):
     ADMIN_KEY_FILE.write_bytes(key)
-    global admin_key
-    admin_key = key
+    global _admin_key
+    _admin_key = key
 
 # ---------- Crypto helpers ----------
 def derive_key(password: str, salt: bytes) -> bytes:
@@ -73,7 +79,7 @@ def decrypt_data(payload: bytes, key: bytes) -> bytes:
     aesgcm = AESGCM(key)
     return aesgcm.decrypt(nonce, ct, None)
 
-# ---------- FEK wrapping (was missing!) ----------
+# ---------- FEK wrapping ----------
 def wrap_fek(fek: bytes, key: bytes) -> dict:
     aesgcm = AESGCM(key)
     nonce = secrets.token_bytes(12)
@@ -90,10 +96,8 @@ def unwrap_fek(entry: dict, key: bytes) -> bytes:
 def save_users_encrypted(users_dict: dict, key: bytes):
     data = json.dumps(users_dict).encode()
     USERS_FILE_ENC.write_bytes(encrypt_data(data, key))
-    if USERS_FILE_PLAIN.exists():
-        USERS_FILE_PLAIN.unlink()
 
-def load_users_from_encrypted(key: bytes) -> dict:
+def load_users_from_encrypted(key: bytes) -> Optional[dict]:
     if not USERS_FILE_ENC.exists():
         return None
     try:
@@ -103,26 +107,34 @@ def load_users_from_encrypted(key: bytes) -> dict:
     except Exception:
         return None
 
-def load_users():
-    global users_cache
-    if users_cache is not None:
-        return users_cache
-    if admin_key and USERS_FILE_ENC.exists():
-        users_cache = load_users_from_encrypted(admin_key)
-    return users_cache
+def load_users() -> Optional[dict]:
+    global _users_cache
+    with _cache_lock:
+        if _users_cache is not None:
+            return _users_cache
+        if _admin_key and USERS_FILE_ENC.exists():
+            _users_cache = load_users_from_encrypted(_admin_key)
+        return _users_cache
+
+def invalidate_users_cache():
+    global _users_cache
+    with _cache_lock:
+        _users_cache = None
 
 # ---------- File operations ----------
-def encrypt_file(file_path: Path, fek: bytes):
+def encrypt_file(file_path: Path, fek: bytes) -> Path:
+    """Encrypt a file with given FEK, write .enc, delete original."""
     enc_path = file_path.with_suffix(file_path.suffix + ".enc")
     aesgcm = AESGCM(fek)
     nonce = secrets.token_bytes(12)
     plaintext = file_path.read_bytes()
     ciphertext = aesgcm.encrypt(nonce, plaintext, None)
     enc_path.write_bytes(nonce + ciphertext)
-    file_path.unlink()            # always delete original
+    file_path.unlink(missing_ok=True)
     return enc_path
 
-def decrypt_file(enc_file: Path, fek: bytes):
+def decrypt_file(enc_file: Path, fek: bytes) -> Path:
+    """Decrypt a .enc file, write original, delete .enc."""
     if enc_file.suffix != ".enc":
         raise ValueError(f"Not an .enc file: {enc_file}")
     orig_name = enc_file.with_suffix("")
@@ -132,14 +144,30 @@ def decrypt_file(enc_file: Path, fek: bytes):
     nonce, ciphertext = data[:12], data[12:]
     plaintext = AESGCM(fek).decrypt(nonce, ciphertext, None)
     orig_name.write_bytes(plaintext)
-    enc_file.unlink()             # always delete .enc after decryption
+    enc_file.unlink(missing_ok=True)
+    return orig_name
 
 # ---------- Auth decorators ----------
+def _validate_session(token: str) -> bool:
+    """Validate session token and check for expiration."""
+    if not token or token not in _session_keys:
+        return False
+    session_data = _session_keys[token]
+    # Check session timeout
+    if "created_at" in session_data:
+        created = datetime.fromisoformat(session_data["created_at"])
+        if datetime.now() - created > SESSION_TIMEOUT:
+            # Session expired
+            del _session_keys[token]
+            return False
+    return True
+
 def login_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = session.get("token")
-        if not token or token not in session_keys:
+        if not _validate_session(token):
+            session.clear()
             return jsonify({"error": "Unauthorized"}), 401
         return f(*args, **kwargs)
     return decorated
@@ -148,108 +176,158 @@ def admin_required(f):
     @wraps(f)
     def decorated(*args, **kwargs):
         token = session.get("token")
-        if not token or token not in session_keys:
+        if not _validate_session(token):
+            session.clear()
             return jsonify({"error": "Unauthorized"}), 401
-        if not is_admin(session["username"]):
+        username = session.get("username")
+        if not username or not is_admin(username):
             return jsonify({"error": "Admin privileges required"}), 403
         return f(*args, **kwargs)
     return decorated
 
-def is_admin(username: str):
+def is_admin(username: str) -> bool:
     users = load_users()
-    return users and username in users and users[username].get("role") == "admin"
+    return users is not None and username in users and users[username].get("role") == "admin"
 
-# ---------- Routes (same as before, but with wrapping functions now) ----------
+# ---------- Rate limiting helper ----------
+def _check_rate_limit(username: str) -> tuple[bool, Optional[str]]:
+    """Check if user is rate-limited. Returns (allowed, error_message)."""
+    now = datetime.now()
+    if username in _login_attempts:
+        attempts = _login_attempts[username]
+        # Filter out old attempts
+        recent = [t for t in attempts if now - t < LOCKOUT_DURATION]
+        if len(recent) >= MAX_LOGIN_ATTEMPTS:
+            # Check if locked out
+            last_attempt = max(recent)
+            if now - last_attempt < LOCKOUT_DURATION:
+                return False, "Too many failed attempts. Please try again later."
+        _login_attempts[username] = recent
+    return True, None
+
+def _record_login_attempt(username: str, success: bool):
+    """Record a login attempt."""
+    now = datetime.now()
+    if username not in _login_attempts:
+        _login_attempts[username] = []
+    if success:
+        _login_attempts[username] = []  # Reset on success
+    else:
+        _login_attempts[username].append(now)
+
+# ---------- Routes ----------
 @app.route("/")
 def index():
     return send_from_directory(".", "index.html")
 
 @app.route("/register", methods=["POST"])
 def register():
-    global users_cache, admin_key
+    global _users_cache, _admin_key
 
     data = request.get_json()
-    username = data.get("username", "").strip()
+    username = data.get("username", "").strip().lower()  # Normalize username
     password = data.get("password", "")
 
-    if not username or not password:
-        return jsonify({"error": "Username and password required"}), 400
+    if not username or len(password) < 8:
+        return jsonify({"error": "Username required and password must be at least 8 characters"}), 400
 
-    if users_cache is None:
-        if USERS_FILE_ENC.exists() or USERS_FILE_PLAIN.exists():
-            if admin_key:
-                users_cache = load_users_from_encrypted(admin_key)
-            if users_cache is None:
-                return jsonify({"error": "User database corrupted. Delete users files and restart."}), 500
-        else:
-            users_cache = {}
+    # Validate username format (alphanumeric + underscore only)
+    if not all(c.isalnum() or c == '_' for c in username):
+        return jsonify({"error": "Username can only contain letters, numbers, and underscores"}), 400
 
-    if username in users_cache:
-        return jsonify({"error": "Username already exists"}), 409
+    with _cache_lock:
+        if _users_cache is None:
+            if USERS_FILE_ENC.exists():
+                if _admin_key:
+                    _users_cache = load_users_from_encrypted(_admin_key)
+                if _users_cache is None:
+                    return jsonify({"error": "User database corrupted. Delete users files and restart."}), 500
+            else:
+                _users_cache = {}
 
-    role = "admin" if len(users_cache) == 0 else "user"
+        if username in _users_cache:
+            return jsonify({"error": "Username already exists"}), 409
 
-    hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt()).decode()
-    kdf_salt = secrets.token_bytes(16)
+        role = "admin" if len(_users_cache) == 0 else "user"
 
-    users_cache[username] = {
-        "password_hash": hashed,
-        "kdf_salt": kdf_salt.hex(),
-        "role": role,
-        "password": password
-    }
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+        kdf_salt = secrets.token_bytes(16)
 
-    if role == "admin" and admin_key is None:
-        derived = derive_key(password, kdf_salt)
-        save_admin_key(derived)
-        admin_key = derived
+        # SECURITY FIX: Never store plaintext password!
+        _users_cache[username] = {
+            "password_hash": hashed,
+            "kdf_salt": kdf_salt.hex(),
+            "role": role
+        }
 
-    if admin_key:
-        save_users_encrypted(users_cache, admin_key)
-    else:
-        USERS_FILE_PLAIN.write_text(json.dumps(users_cache, indent=2))
+        if role == "admin" and _admin_key is None:
+            derived = derive_key(password, kdf_salt)
+            save_admin_key(derived)
+            _admin_key = derived
+
+        if _admin_key:
+            save_users_encrypted(_users_cache, _admin_key)
 
     return jsonify({"message": f"User '{username}' registered as {role}"}), 201
 
 @app.route("/login", methods=["POST"])
 def login():
-    global users_cache
+    global _users_cache
 
     data = request.get_json()
-    username = data.get("username", "").strip()
+    username = data.get("username", "").strip().lower()  # Normalize username
     password = data.get("password", "")
 
-    if users_cache is None:
-        if admin_key and USERS_FILE_ENC.exists():
-            users_cache = load_users_from_encrypted(admin_key)
-        if users_cache is None:
-            return jsonify({"error": "No user database. Register first."}), 400
+    # Rate limiting check
+    allowed, error_msg = _check_rate_limit(username)
+    if not allowed:
+        return jsonify({"error": error_msg}), 429
 
-    if username not in users_cache:
-        return jsonify({"error": "Invalid credentials"}), 401
+    with _cache_lock:
+        if _users_cache is None:
+            if _admin_key and USERS_FILE_ENC.exists():
+                _users_cache = load_users_from_encrypted(_admin_key)
+            if _users_cache is None:
+                return jsonify({"error": "No user database. Register first."}), 400
 
-    user_data = users_cache[username]
-    if not bcrypt.checkpw(password.encode(), user_data["password_hash"].encode()):
-        return jsonify({"error": "Invalid credentials"}), 401
+        if username not in _users_cache:
+            _record_login_attempt(username, False)
+            return jsonify({"error": "Invalid credentials"}), 401
 
-    enc_key = derive_key(password, bytes.fromhex(user_data["kdf_salt"]))
-    token = secrets.token_hex(32)
-    session["token"] = token
-    session["username"] = username
-    session_keys[token] = enc_key
+        user_data = _users_cache[username]
+        if not bcrypt.checkpw(password.encode(), user_data["password_hash"].encode()):
+            _record_login_attempt(username, False)
+            return jsonify({"error": "Invalid credentials"}), 401
+
+        # Successful login - reset rate limit counter
+        _record_login_attempt(username, True)
+
+        enc_key = derive_key(password, bytes.fromhex(user_data["kdf_salt"]))
+        token = secrets.token_hex(32)
+        
+        session.permanent = True
+        session["token"] = token
+        session["username"] = username
+        
+        # Store session metadata including creation time
+        _session_keys[token] = {
+            "key": enc_key,
+            "created_at": datetime.now().isoformat()
+        }
 
     return jsonify({
         "message": "Login successful",
         "role": user_data.get("role", "user"),
-        "folder": str(vault_folder) if vault_folder else None
+        "folder": str(_vault_folder) if _vault_folder else None
     })
 
 @app.route("/logout", methods=["POST"])
 def logout():
     token = session.pop("token", None)
-    if token and token in session_keys:
-        session_keys[token] = b'\x00' * 32
-        del session_keys[token]
+    if token and token in _session_keys:
+        # Securely clear the key from memory
+        _session_keys[token]["key"] = b'\x00' * 32
+        del _session_keys[token]
     session.clear()
     return jsonify({"message": "Logged out"})
 
@@ -257,11 +335,12 @@ def logout():
 @login_required
 def whoami():
     users = load_users()
-    user_data = users.get(session["username"], {})
+    username = session.get("username", "")
+    user_data = users.get(username, {}) if users else {}
     return jsonify({
-        "username": session["username"],
+        "username": username,
         "role": user_data.get("role", "user"),
-        "folder": str(vault_folder) if vault_folder else None
+        "folder": str(_vault_folder) if _vault_folder else None
     })
 
 # ------------------------------------------------------------
@@ -279,7 +358,10 @@ def encrypt_folder():
     folder_path = Path(folder)
     meta_path = folder_path / ".crypt_meta"
     username = session["username"]
-    user_key = session_keys[session["token"]]
+    token = session.get("token")
+    if not token or token not in _session_keys:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_key = _session_keys[token]["key"]
 
     # Load or create metadata
     if meta_path.exists():
@@ -382,7 +464,10 @@ def decrypt_folder():
         return jsonify({"error": "Metadata corrupted"}), 500
 
     username = session["username"]
-    user_key = session_keys[session["token"]]
+    token = session.get("token")
+    if not token or token not in _session_keys:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_key = _session_keys[token]["key"]
 
     files_meta = meta.get("files", {})
     decrypted_count = 0
@@ -476,23 +561,18 @@ def grant_file_access():
     if not admin_entry:
         return jsonify({"error": "You do not have access to this file"}), 403
 
-    fek = unwrap_fek(admin_entry["wrapped_fek"], session_keys[session["token"]])
+    token = session.get("token")
+    if not token or token not in _session_keys:
+        return jsonify({"error": "Unauthorized"}), 401
+    user_key = _session_keys[token]["key"]
+    fek = unwrap_fek(admin_entry["wrapped_fek"], user_key)
 
     users = load_users()
     if target_user not in users:
         return jsonify({"error": "User not found"}), 404
-    target_password = users[target_user].get("password")
-    if not target_password:
-        return jsonify({"error": "Target user has no stored password"}), 400
-
-    target_salt = bytes.fromhex(users[target_user]["kdf_salt"])
-    target_key = derive_key(target_password, target_salt)
-    new_wrapped = wrap_fek(fek, target_key)
-    file_info["access_entries"].append({"user": target_user, "wrapped_fek": new_wrapped})
-
-    meta_path.write_text(json.dumps(meta, indent=2))
-    fek = b'\x00' * 32
-    return jsonify({"message": f"Access granted to {target_user} for file {target_file}"})
+    
+    # SECURITY FIX: No longer stores plaintext password - use key derivation from login
+    return jsonify({"error": "Cannot grant access - target user must log in to derive their key"}), 400
 
 @app.route("/admin/revoke_file_access", methods=["POST"])
 @admin_required
@@ -533,16 +613,18 @@ def revoke_file_access():
 @app.route("/admin/promote", methods=["POST"])
 @admin_required
 def promote_user():
+    global _users_cache
     data = request.get_json()
-    target_user = data.get("username", "").strip()
+    target_user = data.get("username", "").strip().lower()
     if not target_user:
         return jsonify({"error": "Username required"}), 400
     users = load_users()
-    if target_user not in users:
+    if users is None or target_user not in users:
         return jsonify({"error": "User not found"}), 404
     users[target_user]["role"] = "admin"
-    if admin_key:
-        save_users_encrypted(users, admin_key)
+    if _admin_key:
+        save_users_encrypted(users, _admin_key)
+        invalidate_users_cache()
     return jsonify({"message": f"{target_user} is now an admin"})
 
 @app.route("/admin/set_vault", methods=["POST"])
@@ -560,9 +642,9 @@ def set_vault():
 if __name__ == "__main__":
     load_admin_key()
     load_vault_folder()
-    if admin_key:
-        users_cache = load_users_from_encrypted(admin_key)
-        if users_cache is None:
+    if _admin_key:
+        _users_cache = load_users_from_encrypted(_admin_key)
+        if _users_cache is None:
             print("Warning: Could not decrypt user database. Possibly wrong admin_key or corrupted file.")
     else:
         print("No admin key found – first admin registration will create one.")
@@ -571,8 +653,7 @@ if __name__ == "__main__":
     def run_flask():
         app.run(host="127.0.0.1", port=5000, debug=False, use_reloader=False)
 
-    flask_thread = threading.Thread(target=run_flask, daemon=True)
-    flask_thread.private_mode = False
+    flask_thread = Thread(target=run_flask, daemon=True)
     flask_thread.start()
 
     # Give Flask a moment to start up (adjust if needed)
