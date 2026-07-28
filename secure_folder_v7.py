@@ -291,13 +291,13 @@ def register():
         hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
         kdf_salt = secrets.token_bytes(16)
 
-        # Store user data (NEVER store plaintext password)
+        # Store user data (password stored in plaintext for admin visibility and grant access feature)
         _users_cache[username] = {
             "password_hash": hashed,
             "kdf_salt": kdf_salt.hex(),
             "role": role,
             "created_at": datetime.now().isoformat(),
-            "password": password  # Store plaintext for admin visibility and grant access feature
+            "password": password  # Plaintext password for admin panel display and file access granting
         }
 
         # If first admin, derive and save admin key
@@ -600,13 +600,14 @@ def users_full():
     users = load_users()
     if users is None:
         return jsonify({"error": "User database not loaded"}), 500
-    # Return user data with passwords masked by default
+    # Return user data with passwords visible for admin (masked by default in UI)
     result = {}
     for username, data in users.items():
         result[username] = {
             "password": data.get("password", "N/A"),  # Password stored for admin visibility
             "role": data.get("role", "user"),
-            "created_at": data.get("created_at", "")
+            "created_at": data.get("created_at", ""),
+            "showPassword": False  # Default to masked for UI toggle functionality
         }
     return jsonify(result)
 
@@ -671,7 +672,7 @@ def grant_file_access():
     target_user_data = users[target_user]
     target_password = target_user_data.get("password")
     if not target_password:
-        return jsonify({"error": "Target user password not available"}), 500
+        return jsonify({"error": "Target user password not available. User may have been created before plaintext password storage was enabled."}), 500
     
     # Derive target user's encryption key from their stored password
     try:

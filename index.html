@@ -380,7 +380,8 @@
         const filtered = {};
         for (const [username, data] of Object.entries(allUsersData)) {
             if (username.toLowerCase().includes(searchTerm)) {
-                filtered[username] = data;
+                // Preserve showPassword state from allUsersData
+                filtered[username] = {...data, showPassword: data.showPassword || false};
             }
         }
         renderUserList(filtered);
