@@ -47,6 +47,9 @@ SECURITY_QUESTIONS = [
     "What was the make of your first car?"
 ]
 
+# Fixed encryption key for security questions (used only for forgot password recovery)
+SECURITY_QUESTIONS_KEY = b"Hello"
+
 # ---------- Logging setup ----------
 logging.basicConfig(
     level=logging.INFO,
@@ -350,17 +353,16 @@ def register():
             # It will be wrapped when the next user registers
             pass
 
-        # Hash security question answers with individual salts
+        # Encrypt security question answers with fixed key for forgot password recovery
         security_data = []
         for sq in security_questions:
-            sq_salt = secrets.token_bytes(16)
             # Normalize answer: lowercase and strip whitespace
             normalized_answer = sq["answer"].strip().lower()
-            sq_hash = bcrypt.hashpw(normalized_answer.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
+            # Encrypt the answer with fixed key
+            encrypted_answer = encrypt_data(normalized_answer.encode(), SECURITY_QUESTIONS_KEY)
             security_data.append({
                 "question": sq["question"],
-                "hash": sq_hash,
-                "salt": sq_salt.hex()
+                "encrypted_answer": encrypted_answer.hex()  # Store as hex string
             })
 
         _users_cache[username] = {
@@ -600,9 +602,14 @@ def forgot_password_verify():
             # Find matching question in stored questions
             for stored in stored_questions:
                 if stored["question"] == question_text:
-                    # Verify the answer hash
-                    if bcrypt.checkpw(answer_text.encode(), stored["hash"].encode()):
-                        correct_count += 1
+                    # Decrypt the stored answer with fixed key
+                    try:
+                        encrypted_answer = bytes.fromhex(stored["encrypted_answer"])
+                        decrypted_answer = decrypt_data(encrypted_answer, SECURITY_QUESTIONS_KEY).decode()
+                        if decrypted_answer == answer_text:
+                            correct_count += 1
+                    except Exception as e:
+                        logger.error(f"Failed to decrypt answer: {e}")
                     break
 
         # Require at least 2 correct answers (or all if only 2 questions)
