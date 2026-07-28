@@ -3,12 +3,14 @@ import json
 import secrets
 import hmac
 import hashlib
+import re
 from pathlib import Path
 from functools import wraps
 from threading import RLock, Thread
 from datetime import datetime, timedelta
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, Tuple
 import time
+import logging
 
 from flask import Flask, request, jsonify, session, send_from_directory  # pyright: ignore[reportMissingImports]
 from cryptography.hazmat.primitives.kdf.pbkdf2 import PBKDF2HMAC  # pyright: ignore[reportMissingImports]
@@ -17,12 +19,24 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM  # type: ignore[r
 import bcrypt  # type: ignore[reportMissingImports]
 
 # ---------- Configuration ----------
-ADMIN_KEY_FILE = Path("admin_key.bin")
-VAULT_FOLDER_FILE = Path("vault_folder.txt")
-USERS_FILE_ENC = Path("users.json.enc")
+# Use absolute path in user's home directory to avoid permission issues
+HOME_DIR = Path.home()
+ADMIN_KEY_FILE = HOME_DIR / ".secure_folder_admin_key.bin"
+VAULT_FOLDER_FILE = HOME_DIR / ".secure_folder_vault.txt"
+USERS_FILE_ENC = HOME_DIR / ".secure_folder_users.json.enc"
+
 SESSION_TIMEOUT = timedelta(hours=2)
 MAX_LOGIN_ATTEMPTS = 5
 LOCKOUT_DURATION = timedelta(minutes=15)
+PBKDF2_ITERATIONS = 100_000
+BCRYPT_ROUNDS = 12
+
+# ---------- Logging setup ----------
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(levelname)s - %(message)s'
+)
+logger = logging.getLogger(__name__)
 
 # ---------- Thread-safe caches ----------
 _cache_lock = RLock()
@@ -64,16 +78,21 @@ def save_admin_key(key: bytes):
 
 # ---------- Crypto helpers ----------
 def derive_key(password: str, salt: bytes) -> bytes:
-    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=100_000)
+    """Derive a key from password using PBKDF2-HMAC-SHA256."""
+    kdf = PBKDF2HMAC(algorithm=hashes.SHA256(), length=32, salt=salt, iterations=PBKDF2_ITERATIONS)
     return kdf.derive(password.encode())
 
 def encrypt_data(data: bytes, key: bytes) -> bytes:
+    """Encrypt data using AES-GCM with random nonce."""
     aesgcm = AESGCM(key)
     nonce = secrets.token_bytes(12)
     ct = aesgcm.encrypt(nonce, data, None)
     return nonce + ct
 
 def decrypt_data(payload: bytes, key: bytes) -> bytes:
+    """Decrypt AES-GCM encrypted data."""
+    if len(payload) < 12:
+        raise ValueError("Payload too short")
     nonce = payload[:12]
     ct = payload[12:]
     aesgcm = AESGCM(key)
@@ -222,87 +241,153 @@ def index():
 
 @app.route("/register", methods=["POST"])
 def register():
+    """Register a new user. First user becomes admin."""
     global _users_cache, _admin_key
 
-    data = request.get_json()
-    username = data.get("username", "").strip().lower()  # Normalize username
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+    except Exception as e:
+        logger.error(f"Invalid JSON in registration: {e}")
+        return jsonify({"error": "Invalid request format"}), 400
+
+    username = data.get("username", "").strip().lower()
     password = data.get("password", "")
 
-    if not username or len(password) < 8:
-        return jsonify({"error": "Username required and password must be at least 8 characters"}), 400
-
-    # Validate username format (alphanumeric + underscore only)
-    if not all(c.isalnum() or c == '_' for c in username):
+    # Validate input
+    if not username:
+        return jsonify({"error": "Username is required"}), 400
+    if len(username) < 3 or len(username) > 32:
+        return jsonify({"error": "Username must be between 3 and 32 characters"}), 400
+    if not re.match(r'^[a-zA-Z0-9_]+$', username):
         return jsonify({"error": "Username can only contain letters, numbers, and underscores"}), 400
+    if len(password) < 8:
+        return jsonify({"error": "Password must be at least 8 characters"}), 400
+    if len(password) > 128:
+        return jsonify({"error": "Password is too long (max 128 characters)"}), 400
 
     with _cache_lock:
+        # Initialize users cache if needed
         if _users_cache is None:
             if USERS_FILE_ENC.exists():
                 if _admin_key:
                     _users_cache = load_users_from_encrypted(_admin_key)
                 if _users_cache is None:
-                    return jsonify({"error": "User database corrupted. Delete users files and restart."}), 500
+                    logger.error("User database corrupted")
+                    return jsonify({"error": "User database corrupted. Please contact administrator."}), 500
             else:
                 _users_cache = {}
 
+        # Check if username already exists
         if username in _users_cache:
             return jsonify({"error": "Username already exists"}), 409
 
+        # Determine role (first user is admin)
         role = "admin" if len(_users_cache) == 0 else "user"
 
-        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=12)).decode()
+        # Hash password with bcrypt
+        hashed = bcrypt.hashpw(password.encode(), bcrypt.gensalt(rounds=BCRYPT_ROUNDS)).decode()
         kdf_salt = secrets.token_bytes(16)
 
-        # SECURITY FIX: Never store plaintext password!
+        # Store user data (NEVER store plaintext password)
         _users_cache[username] = {
             "password_hash": hashed,
             "kdf_salt": kdf_salt.hex(),
-            "role": role
+            "role": role,
+            "created_at": datetime.now().isoformat()
         }
 
+        # If first admin, derive and save admin key
         if role == "admin" and _admin_key is None:
             derived = derive_key(password, kdf_salt)
-            save_admin_key(derived)
-            _admin_key = derived
+            try:
+                save_admin_key(derived)
+                _admin_key = derived
+            except PermissionError as e:
+                logger.error(f"Permission denied saving admin key: {e}")
+                del _users_cache[username]
+                return jsonify({"error": "Failed to save admin key. Check file permissions."}), 500
 
+        # Save encrypted user database
         if _admin_key:
-            save_users_encrypted(_users_cache, _admin_key)
+            try:
+                save_users_encrypted(_users_cache, _admin_key)
+            except Exception as e:
+                logger.error(f"Failed to save user database: {e}")
+                del _users_cache[username]
+                return jsonify({"error": "Failed to save user data"}), 500
 
-    return jsonify({"message": f"User '{username}' registered as {role}"}), 201
+    logger.info(f"New user registered: {username} ({role})")
+    return jsonify({
+        "message": f"User '{username}' registered successfully as {role}",
+        "role": role
+    }), 201
 
 @app.route("/login", methods=["POST"])
 def login():
+    """Authenticate user and create session."""
     global _users_cache
 
-    data = request.get_json()
-    username = data.get("username", "").strip().lower()  # Normalize username
+    try:
+        data = request.get_json()
+        if not data:
+            return jsonify({"error": "Invalid request format"}), 400
+    except Exception as e:
+        logger.error(f"Invalid JSON in login: {e}")
+        return jsonify({"error": "Invalid request format"}), 400
+
+    username = data.get("username", "").strip().lower()
     password = data.get("password", "")
+
+    # Basic input validation
+    if not username or not password:
+        return jsonify({"error": "Username and password are required"}), 400
 
     # Rate limiting check
     allowed, error_msg = _check_rate_limit(username)
     if not allowed:
+        logger.warning(f"Rate limited login attempt for: {username}")
         return jsonify({"error": error_msg}), 429
 
     with _cache_lock:
+        # Initialize users cache if needed
         if _users_cache is None:
             if _admin_key and USERS_FILE_ENC.exists():
                 _users_cache = load_users_from_encrypted(_admin_key)
             if _users_cache is None:
-                return jsonify({"error": "No user database. Register first."}), 400
+                return jsonify({"error": "No user database. Please register first."}), 400
 
+        # Check if user exists
         if username not in _users_cache:
             _record_login_attempt(username, False)
+            logger.info(f"Failed login attempt for non-existent user: {username}")
+            # Use generic message to prevent user enumeration
             return jsonify({"error": "Invalid credentials"}), 401
 
         user_data = _users_cache[username]
-        if not bcrypt.checkpw(password.encode(), user_data["password_hash"].encode()):
-            _record_login_attempt(username, False)
-            return jsonify({"error": "Invalid credentials"}), 401
+        
+        # Verify password with bcrypt (constant-time comparison)
+        try:
+            if not bcrypt.checkpw(password.encode(), user_data["password_hash"].encode()):
+                _record_login_attempt(username, False)
+                logger.info(f"Failed login attempt for user: {username}")
+                return jsonify({"error": "Invalid credentials"}), 401
+        except Exception as e:
+            logger.error(f"Error during password verification: {e}")
+            return jsonify({"error": "Authentication error"}), 500
 
         # Successful login - reset rate limit counter
         _record_login_attempt(username, True)
 
-        enc_key = derive_key(password, bytes.fromhex(user_data["kdf_salt"]))
+        # Derive encryption key for this user
+        try:
+            enc_key = derive_key(password, bytes.fromhex(user_data["kdf_salt"]))
+        except Exception as e:
+            logger.error(f"Error deriving key for user {username}: {e}")
+            return jsonify({"error": "Authentication error"}), 500
+
+        # Generate secure session token
         token = secrets.token_hex(32)
         
         session.permanent = True
@@ -315,6 +400,7 @@ def login():
             "created_at": datetime.now().isoformat()
         }
 
+    logger.info(f"User logged in: {username}")
     return jsonify({
         "message": "Login successful",
         "role": user_data.get("role", "user"),
