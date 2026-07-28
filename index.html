@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Folder Locker v7 – Final</title>
+    <style>
+        :root {
+            --bg: #1e1e2f; --surface: #2a2a3c; --primary: #7a73fc;
+            --danger: #ff4757; --success: #2ed573; --text: #eee;
+            --text-muted: #aaa; --radius: 12px;
+        }
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body {
+            font-family: 'Segoe UI', system-ui, sans-serif;
+            background: var(--bg); color: var(--text);
+            display: flex; justify-content: center; align-items: center;
+            min-height: 100vh; padding: 20px;
+        }
+        .container {
+            background: var(--surface); padding: 30px; border-radius: var(--radius);
+            width: 100%; max-width: 900px; box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+        }
+        h2 { margin-bottom: 20px; color: var(--primary); }
+        .section { display: none; }
+        .section.active { display: block; }
+        input, button, select {
+            width: 100%; padding: 12px; margin: 8px 0;
+            border: none; border-radius: var(--radius);
+            background: #3b3b50; color: var(--text); font-size: 16px;
+        }
+        button {
+            cursor: pointer; background: var(--primary); font-weight: bold; transition: 0.2s;
+        }
+        button:hover { filter: brightness(1.2); }
+        button.danger { background: var(--danger); }
+        button.success { background: var(--success); }
+        .status {
+            margin-top: 15px; padding: 12px; border-radius: var(--radius);
+            background: #333; min-height: 40px; word-break: break-all;
+        }
+        .info { color: var(--primary); }
+        .error { color: var(--danger); }
+        .small { font-size: 14px; color: var(--text-muted); }
+        .flex { display: flex; gap: 10px; align-items: center; }
+        .admin-panel {
+            margin-top: 20px; border-top: 1px solid #555; padding-top: 15px;
+        }
+        .row {
+            display: flex; flex-wrap: wrap; gap: 10px; align-items: center; margin-bottom: 10px;
+        }
+        .row > * { flex: 1; min-width: 150px; }
+        .row button { flex: 0 0 auto; width: auto; }
+        .user-list-container {
+            background: #2a2a3c; border-radius: var(--radius); padding: 10px; margin-bottom: 15px;
+            max-height: 200px; overflow-y: auto;
+        }
+        .user-entry {
+            padding: 6px; border-bottom: 1px solid #444; display: flex; justify-content: space-between;
+        }
+    </style>
+</head>
+<body>
+<div class="container">
+    <!-- Auth Section -->
+    <div id="authSection" class="section active">
+        <h2>🔐 Locker login page</h2>
+
+        <form id="loginForm" onsubmit="handleLogin(event)">
+            <input type="text" id="loginUser" placeholder="Username" required>
+            <input type="password" id="loginPass" placeholder="Password" required>
+            <button type="submit">Log In</button>
+            <p class="small" style="text-align:center;">No account? <a href="#" onclick="showRegister()" style="color: #d7ec6e;">Register</a></p>
+        </form>
+
+        <form id="registerForm" style="display:none;" onsubmit="handleRegister(event)">
+            <input type="text" id="regUser" placeholder="Choose username">
+            <input type="password" id="regPass" placeholder="Choose password">
+            <button type="submit">Register</button>
+            <p class="small" style="text-align:center;"><a href="#" onclick="showLogin()" style="color: #d7ec6e;">Back to login</a></p>
+        </form>
+    </div>
+
+    <!-- Main App -->
+    <div id="mainSection" class="section">
+        <h2>📁 Folder Encryption</h2>
+        <div id="userInfo" class="small" style="margin-bottom:10px;"></div>
+
+        <div id="adminVaultSetup" style="display:none; margin-bottom:15px;">
+            <strong>🔑 Vault Folder (shared by all users)</strong>
+            <div class="flex">
+                <input type="text" id="vaultFolderPath" placeholder="e.g. C:\SecureVault">
+                <button onclick="setVaultFolder()" style="width:auto;">Set</button>
+            </div>
+            <p class="small" id="vaultStatus"></p>
+        </div>
+        
+        <!-- Admin folder input (visible only for admins) -->
+        <div id="adminFolderInput" style="display:none;">
+            <input type="text" id="folderPath" placeholder="C:\Users\Admin\SecretFolder">
+        </div>
+
+        <!-- User fixed folder display -->
+        <div id="userFolderDisplay" style="display:none;">
+            <p class="small">Your secure folder: <span id="userFolderPath" style="color:var(--primary);"></span></p>
+        </div>
+
+        <div class="flex">
+            <button onclick="encryptFolder()">🔒 Encrypt</button>
+            <button onclick="decryptFolder()">🔓 Decrypt</button>
+        </div>
+
+        <!-- Admin Panel -->
+        <div id="adminPanel" class="admin-panel" style="display:none;">
+            <h3>🛡️ Admin – File Access Control</h3>
+
+            <div style="margin-bottom:15px;">
+                <strong>Registered Users (passwords visible)</strong>
+                <button onclick="loadUserList()" style="width:auto; margin-left:10px; background:#555;">↻ Refresh</button>
+                <div id="userListDisplay" class="user-list-container">Loading...</div>
+            </div>
+
+            <div class="row">
+                <input type="text" id="fileInput" list="fileList" placeholder="Type file name (sub‑folder supported)">
+                <datalist id="fileList"></datalist>
+            </div>
+
+            <div class="row">
+                <select id="userSelect">
+                    <option value="">-- Select user --</option>
+                </select>
+            </div>
+
+            <div class="row">
+                <button class="success" onclick="grantAccess()">➕ Grant Access</button>
+                <button class="danger" onclick="revokeAccess()">➖ Revoke Access</button>
+                <button onclick="promoteUser()" style="background:#ed4898; width:auto;">👑 Promote to Admin</button>
+            </div>
+        </div>
+
+        <button class="danger" onclick="logout()" style="margin-top:20px;">👋 Logout</button>
+        <div id="statusBox" class="status"></div>
+    </div>
+</div>
+
+<script>
+    const API = '/';
+    let currentUser = {};
+
+    function setStatus(msg, type='info') {
+        const box = document.getElementById('statusBox');
+        box.textContent = msg;
+        box.className = `status ${type}`;
+    }
+
+    function showRegister() {
+        document.getElementById('loginForm').style.display='none';
+        document.getElementById('registerForm').style.display='block';
+    }
+    function showLogin() {
+        document.getElementById('loginForm').style.display='block';
+        document.getElementById('registerForm').style.display='none';
+    }
+
+    function handleLogin(e) {
+        e.preventDefault();      // stop the form from reloading the page
+        login();                 // call your existing login function
+    }
+
+    function handleRegister(e) {
+        e.preventDefault();      // stop the form from reloading the page
+        register();                 // call your existing login function
+    }
+
+    async function register() {
+        const username = document.getElementById('regUser').value.trim();
+        const password = document.getElementById('regPass').value;
+        const res = await fetch(API+'register', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            alert(data.message);
+            showLogin();
+        } else {
+            setStatus(data.error, 'error');
+        }
+    }
+
+    async function login() {
+        const username = document.getElementById('loginUser').value.trim();
+        const password = document.getElementById('loginPass').value;
+        const res = await fetch(API+'login', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({username, password})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            currentUser = { username, role: data.role, folder: data.folder };
+            document.getElementById('authSection').classList.remove('active');
+            document.getElementById('mainSection').classList.add('active');
+            document.getElementById('userInfo').textContent = `Logged in as ${username} (${data.role})`;
+
+            if (data.role === 'admin') {
+                // Admin can set the vault folder
+                document.getElementById('adminVaultSetup').style.display = 'block';
+                document.getElementById('adminFolderInput').style.display = 'none';   // admin doesn't need a per‑op folder input if vault is set
+                document.getElementById('userFolderDisplay').style.display = 'none';
+                document.getElementById('adminPanel').style.display = 'block';
+                // If a vault folder already exists, show it
+                if (currentUser.folder) {
+                    document.getElementById('vaultFolderPath').value = currentUser.folder;
+                    document.getElementById('vaultStatus').textContent = 'Vault is set.';
+                }
+            } else {
+                // User: just show the vault folder (or a message if not set)
+                document.getElementById('adminVaultSetup').style.display = 'none';
+                document.getElementById('userFolderDisplay').style.display = 'block';
+                document.getElementById('userFolderPath').textContent = currentUser.folder || 'Not set yet – contact admin';
+                document.getElementById('adminPanel').style.display = 'none';
+            }
+            setStatus('');
+        } else {
+            setStatus(data.error, 'error');
+        }
+    }
+
+    async function logout() {
+        await fetch(API+'logout', {method:'POST'});
+        document.getElementById('mainSection').classList.remove('active');
+        document.getElementById('authSection').classList.add('active');
+        setStatus('');
+        currentUser = {};
+    }
+
+    function getFolder() {
+        // Both roles now use the same vault folder
+        return currentUser.folder || '';
+    }
+
+    async function loadFileList() {
+        const folder = getFolder();
+        const datalist = document.getElementById('fileList');
+        datalist.innerHTML = '';
+        if (!folder) return;
+        const res = await fetch(API+'admin/list_files', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({folder})
+        });
+        const data = await res.json();
+        if (res.ok && data.files) {
+            data.files.forEach(f => {
+                const opt = document.createElement('option');
+                opt.value = f;
+                datalist.appendChild(opt);
+            });
+        }
+    }
+
+    async function loadUserList() {
+        if (currentUser.role !== 'admin') return;
+        const res = await fetch(API+'admin/users_full');
+        const users = await res.json();
+        const displayDiv = document.getElementById('userListDisplay');
+        const select = document.getElementById('userSelect');
+        let html = '';
+        select.innerHTML = '<option value="">-- Select user --</option>';
+        for (const [username, data] of Object.entries(users)) {
+            html += `<div class="user-entry"><span>${username}</span><span style="color:#aaa;">${data.password || 'N/A'}</span></div>`;
+            const opt = document.createElement('option');
+            opt.value = username;
+            opt.textContent = username;
+            select.appendChild(opt);
+        }
+        displayDiv.innerHTML = html || 'No users found.';
+    }
+
+    document.getElementById('folderPath').addEventListener('blur', () => {
+        if (currentUser.role === 'admin') loadFileList();
+    });
+
+    async function encryptFolder() {
+        const folder = getFolder();
+        if (!folder) { setStatus('No folder specified', 'error'); return; }
+        setStatus('Encrypting (originals will be deleted)...');
+        const res = await fetch(API+'encrypt', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({folder})
+        });
+        const data = await res.json();
+        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        if (res.ok && currentUser.role === 'admin') {
+            loadFileList();
+            loadUserList();
+        }
+    }
+
+    async function decryptFolder() {
+        const folder = getFolder();
+        if (!folder) { setStatus('No folder specified', 'error'); return; }
+        setStatus('Decrypting (.enc files will be deleted)...');
+        const res = await fetch(API+'decrypt', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({folder})
+        });
+        const data = await res.json();
+        setStatus(data.message || data.error || (data.details ? data.details.join('; ') : ''), res.ok ? 'info' : 'error');
+        if (res.ok && currentUser.role === 'admin') {
+            loadFileList();
+            loadUserList();
+        }
+    }
+
+    async function grantAccess() {
+        const folder = getFolder();
+        const file = document.getElementById('fileInput').value.trim();
+        const user = document.getElementById('userSelect').value;
+        if (!folder || !file || !user) {
+            setStatus('Folder, file and user are required', 'error');
+            return;
+        }
+        setStatus('Granting access...');
+        const res = await fetch(API+'admin/grant_file_access', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({folder, file, username: user})
+        });
+        const data = await res.json();
+        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+    }
+
+    async function revokeAccess() {
+        const folder = getFolder();
+        const file = document.getElementById('fileInput').value.trim();
+        const user = document.getElementById('userSelect').value;
+        if (!folder || !file || !user) {
+            setStatus('Folder, file and user are required', 'error');
+            return;
+        }
+        setStatus('Revoking access...');
+        const res = await fetch(API+'admin/revoke_file_access', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({folder, file, username: user})
+        });
+        const data = await res.json();
+        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+    }
+
+    async function promoteUser() {
+        const user = document.getElementById('userSelect').value;
+        if (!user) { setStatus('Select a user to promote', 'error'); return; }
+        setStatus('Promoting...');
+        const res = await fetch(API+'admin/promote', {
+            method:'POST', headers:{'Content-Type':'application/json'},
+            body: JSON.stringify({username: user})
+        });
+        const data = await res.json();
+        setStatus(data.message || data.error, res.ok ? 'info' : 'error');
+        loadUserList();
+    }
+
+    async function setVaultFolder() {
+        const folder = document.getElementById('vaultFolderPath').value.trim();
+        if (!folder) return alert('Enter a folder path');
+        const res = await fetch(API + 'admin/set_vault', {
+            method: 'POST',
+            headers: {'Content-Type': 'application/json'},
+            body: JSON.stringify({folder})
+        });
+        const data = await res.json();
+        if (res.ok) {
+            currentUser.folder = folder;              // update local state
+            document.getElementById('vaultStatus').textContent = 'Vault set successfully.';
+            document.getElementById('userFolderPath').textContent = folder;
+            loadFileList();   // refresh file list based on new vault
+        } else {
+            alert(data.error);
+        }
+    }
+</script>
+</body>
+</html>
