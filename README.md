@@ -245,7 +245,7 @@ BCRYPT_ROUNDS = 10
 
 ```bash
 export FLASK_ENV=development
-python secure_folder_v7.py
+python secure_folder_v.1.py
 ```
 
 ### Testing
