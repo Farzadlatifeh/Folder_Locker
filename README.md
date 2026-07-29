@@ -1,4 +1,4 @@
-# 🔐 Secure Folder v7
+# 🔐 Secure Folder v.1
 
 A secure file encryption application with multi-user support, role-based access control, and enterprise-grade security features. Built with Flask (backend) and vanilla JavaScript (frontend), using AES-GCM-256 encryption for file protection. Packaged as a desktop application using pywebview.
 
@@ -35,11 +35,11 @@ A secure file encryption application with multi-user support, role-based access 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐     ┌──────────────────┐     ┌─────────────────┐
+┌─────────────────┐      ┌──────────────────┐     ┌─────────────────┐
 │   index.html    │────▶│  secure_folder   │────▶│  File System    │
-│   (Frontend)    │     │     v7.py        │     │  (Encrypted)    │
+│   (Frontend)    │      │     v.1.py       │     │  (Encrypted)    │
 │                 │◀────│   (Flask App)    │◀────│                 │
-└─────────────────┘     └──────────────────┘     └─────────────────┘
+└─────────────────┘      └──────────────────┘     └─────────────────┘
                                │
                                ▼
                         ┌──────────────────┐
@@ -300,7 +300,7 @@ The application includes a comprehensive self-service password recovery system:
 
 ## ⚙️ Configuration
 
-### Security Parameters (in `secure_folder_v7.py`)
+### Security Parameters (in `secure_folder_v.1.py`)
 
 ```python
 # Session Management
@@ -348,6 +348,7 @@ export FLASK_ENV=development
 
 # Run the application
 python secure_folder_v7.py
+python secure_folder_v.1.py
 ```
 
 The application will:
