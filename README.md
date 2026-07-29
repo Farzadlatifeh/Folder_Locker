@@ -215,7 +215,7 @@ The application includes a self-service password recovery system:
 
 ## ⚙️ Configuration
 
-### Security Parameters (in `secure_folder_v7.py`)
+### Security Parameters (in `secure_folder_v.1.py`)
 
 ```python
 SESSION_TIMEOUT = timedelta(hours=2)        # Session duration
