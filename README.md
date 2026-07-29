@@ -1,5 +1,6 @@
 # 🔐 Secure Folder v.1
 
+Do you have many files on a shared PC? Do you want each user has access to some files? this is the right place for you.
 A secure file encryption application with multi-user support, role-based access control, and enterprise-grade security features. Built with Flask (backend) and vanilla JavaScript (frontend), using AES-GCM-256 encryption for file protection. Packaged as a desktop application using pywebview.
 
 ## 📋 Features
@@ -35,24 +36,24 @@ A secure file encryption application with multi-user support, role-based access 
 ## 🏗️ Architecture
 
 ```
-┌─────────────────┐      ┌──────────────────┐     ┌─────────────────┐
-│   index.html    │────▶│  secure_folder   │────▶│  File System    │
-│   (Frontend)    │      │     v.1.py       │     │  (Encrypted)    │
-│                 │◀────│   (Flask App)    │◀────│                 │
-└─────────────────┘      └──────────────────┘     └─────────────────┘
+┌─────────────────┐       ┌──────────────────┐       ┌─────────────────┐
+│   index.html    │ ────> |  secure_folder   │ ────> │  File System    │
+│   (Frontend)    │       │     v.1.py       │       │  (Encrypted)    │
+│                 │ <──── │   (Flask App)    │ <──── │                 │
+└─────────────────┘       └──────────────────┘       └─────────────────┘
+                               │
+                               ▼
+                        ┌──────────────────────────────────────┐
+                        │  Home Directory                      │
+                        │  - .secure_folder_admin_key.bin      │
+                        │  - .secure_folder_users.json.enc     │
+                        │  - .secure_folder_vault.txt          │
+                        │  - .secure_folder_admin_recovery.bin │
+                        └──────────────────────────────────────┘
                                │
                                ▼
                         ┌──────────────────┐
-                        │  Home Directory  │
-                        │  - .secure_folder_admin_key.bin
-                        │  - .secure_folder_users.json.enc
-                        │  - .secure_folder_vault.txt
-                        │  - .secure_folder_admin_recovery.bin
-                        └──────────────────┘
-                               │
-                               ▼
-                        ┌──────────────────┐
-                        │  pywebview       │
+                        │  webview         │
                         │  (Desktop Window)│
                         └──────────────────┘
 ```
