@@ -44,7 +44,11 @@ A secure file encryption application with multi-user support, role-based access 
                                ▼
                         ┌──────────────────┐
                         │  Home Directory  │
-                        │  - .secure_folder_admin_key.bin\n                        │  - .secure_folder_users.json.enc\n                        │  - .secure_folder_vault.txt\n                        │  - .secure_folder_admin_recovery.bin\n                        └──────────────────┘
+                        │  - .secure_folder_admin_key.bin
+                        │  - .secure_folder_users.json.enc
+                        │  - .secure_folder_vault.txt
+                        │  - .secure_folder_admin_recovery.bin
+                        └──────────────────┘
                                │
                                ▼
                         ┌──────────────────┐
@@ -54,7 +58,7 @@ A secure file encryption application with multi-user support, role-based access 
 ```
 
 ### Application Flow
-1. **Startup**: `secure_folder_v7.py` launches Flask server on `http://127.0.0.1:5000` and opens pywebview window
+1. **Startup**: `secure_folder_v.1.py` launches Flask server on `http://127.0.0.1:5000` and opens pywebview window
 2. **First Run**: First user to register becomes admin automatically
 3. **Vault Setup**: Admin configures shared vault folder for encrypted file storage
 4. **Encryption**: Files encrypted with per-file FEK (File Encryption Key), FEK wrapped with user keys
@@ -93,7 +97,7 @@ pip install flask cryptography bcrypt pywebview
 ### File Structure
 ```
 /workspace/
-├── secure_folder_v7.py    # Main application (Flask backend + pywebview)
+├── secure_folder_v.1.py   # Main application (Flask backend + pywebview)
 ├── index.html             # Frontend UI (served by Flask)
 ├── favicon.ico            # Application icon
 ├── README.md              # This documentation
@@ -106,7 +110,7 @@ pip install flask cryptography bcrypt pywebview
 
 1. **Start the application:**
    ```bash
-   python secure_folder_v7.py
+   python secure_folder_v.1.py
    ```
    
    This will:
@@ -347,7 +351,6 @@ SESSION_TIMEOUT = timedelta(hours=4)  # Longer sessions
 export FLASK_ENV=development
 
 # Run the application
-python secure_folder_v7.py
 python secure_folder_v.1.py
 ```
 
@@ -432,19 +435,19 @@ curl -X POST http://localhost:5000/admin/promote \
 ### Debugging Tips
 
 ```python
-# Enable verbose logging in secure_folder_v7.py
+# Enable verbose logging in secure_folder_v.1.py
 logging.basicConfig(
     level=logging.DEBUG,  # Change from INFO to DEBUG
     format='%(asctime)s - %(levelname)s - %(message)s'
 )
 
 # Inspect session keys (in Python REPL)
-from secure_folder_v7 import _session_keys, _users_cache
+from secure_folder_v.1 import _session_keys, _users_cache
 print(_session_keys)
 print(_users_cache)
 
 # Check file paths
-from secure_folder_v7 import HOME_DIR, ADMIN_KEY_FILE, USERS_FILE_ENC
+from secure_folder_v.1 import HOME_DIR, ADMIN_KEY_FILE, USERS_FILE_ENC
 print(f"Home: {HOME_DIR}")
 print(f"Admin key exists: {ADMIN_KEY_FILE.exists()}")
 print(f"Users DB exists: {USERS_FILE_ENC.exists()}")
@@ -471,7 +474,7 @@ print(f"Users DB exists: {USERS_FILE_ENC.exists()}")
 
 ### Security Hardening (Production)
 ```python
-# In secure_folder_v7.py, add these for production deployment:
+# In secure_folder_v.1.py, add these for production deployment:
 app.config['SESSION_COOKIE_SECURE'] = True    # HTTPS only
 app.config['SESSION_COOKIE_SAMESITE'] = 'Strict'  # No cross-site cookies
 
@@ -577,7 +580,7 @@ netstat -an | grep 5000
 lsof -i :5000
 
 # Test Flask server directly (without pywebview)
-python -c "from secure_folder_v7 import app; app.run()"
+python -c "from secure_folder_v.1 import app; app.run()"
 
 # Check for missing system libraries (pywebview requires gtk/qt)
 # On Ubuntu/Debian:
@@ -619,7 +622,7 @@ python -c "from cryptography.hazmat.primitives.ciphers.aead import AESGCM; print
 python -c "import bcrypt; print(bcrypt.gensalt())"
 
 # View application logs (console output)
-python secure_folder_v7.py 2>&1 | tee app.log
+python secure_folder_v.1.py 2>&1 | tee app.log
 ```
 
 ## 📄 License
@@ -662,6 +665,6 @@ When reporting issues, please include:
 
 ---
 
-**Secure Folder v7** - Built with ❤️ using Flask, cryptography, and modern web technologies
+**Secure Folder v.1** - Built with ❤️ using Flask, cryptography, and modern web technologies
 
-**Version**: 7.0 | **Last Updated**: 2024 | **Python**: 3.8+
+**Version**: 1.0 | **Last Updated**: 2024 | **Python**: 3.8+
