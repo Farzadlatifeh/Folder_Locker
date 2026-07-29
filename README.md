@@ -1,4 +1,4 @@
-# 🔐 Secure Folder v7
+# 🔐 Secure Folder v.1
 
 A secure file encryption application with multi-user support, role-based access control, and enterprise-grade security features. Built with Flask (backend) and vanilla JavaScript (frontend), using AES-GCM encryption for file protection.
 
